@@ -1,0 +1,19 @@
+scripts/developer-settings.local.sh
+dist/
+.DS_Store
+
+# macOS metadata
+**/.DS_Store
+
+# local signing secrets (never commit)
+local-sign/*.key
+local-sign/*.p12
+# public certs (.crt) can be committed for trust distribution
+
+# transient packaging artifacts
+*.dmg
+*.log
+*.tmp
+
+# local test output
+/tmp/

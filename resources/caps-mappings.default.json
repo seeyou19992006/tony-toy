@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "mappings": [
+    { "from": "e", "to": { "key": "up_arrow" } },
+    { "from": "d", "to": { "key": "down_arrow" } },
+    { "from": "s", "to": { "key": "left_arrow" } },
+    { "from": "f", "to": { "key": "right_arrow" } },
+    { "from": "w", "to": { "key": "delete_or_backspace" } },
+    { "from": "r", "to": { "key": "delete_forward" } },
+    { "from": "a", "to": { "key": "left_arrow", "modifiers": ["option"] } },
+    { "from": "g", "to": { "key": "right_arrow", "modifiers": ["option"] } },
+    { "from": "z", "to": { "key": "z", "modifiers": ["command"] } },
+    { "from": "x", "to": { "key": "x", "modifiers": ["command"] } },
+    { "from": "c", "to": { "key": "c", "modifiers": ["command"] } },
+    { "from": "v", "to": { "key": "v", "modifiers": ["command"] } },
+    { "from": "i", "to": { "key": "up_arrow", "modifiers": ["shift"] } },
+    { "from": "k", "to": { "key": "down_arrow", "modifiers": ["shift"] } },
+    { "from": "j", "to": { "key": "left_arrow", "modifiers": ["shift"] } },
+    { "from": "l", "to": { "key": "right_arrow", "modifiers": ["shift"] } },
+    { "from": "h", "to": { "key": "left_arrow", "modifiers": ["shift", "option"] } },
+    { "from": "b", "to": { "key": "right_arrow", "modifiers": ["shift", "option"] } },
+    { "from": "spacebar", "to": { "key": "return_or_enter" } },
+    { "from": "escape", "to": { "key": "caps_lock" } }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "activation_button": "button5",
+  "mappings": [
+    { "from": { "input": "scroll_wheel" }, "to": { "action": "volume_scroll" } },
+    { "from": { "input": "button3" }, "to": { "action": "mission_control" } }
+  ]
+}

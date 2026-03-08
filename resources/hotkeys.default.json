@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "from": { "key": "escape", "modifiers": ["command"] },
+      "to": { "key": "grave_accent_and_tilde", "modifiers": ["command"] }
+    },
+    {
+      "from": { "key": "left_arrow", "modifiers": ["option", "shift"] },
+      "to": {
+        "action": "move_window_to_adjacent_display",
+        "direction": "left"
+      }
+    },
+    {
+      "from": { "key": "right_arrow", "modifiers": ["option", "shift"] },
+      "to": {
+        "action": "move_window_to_adjacent_display",
+        "direction": "right"
+      }
+    },
+    {
+      "from": { "key": "up_arrow", "modifiers": ["option", "shift"] },
+      "to": {
+        "action": "move_window_to_adjacent_display",
+        "direction": "up"
+      }
+    },
+    {
+      "from": { "key": "down_arrow", "modifiers": ["option", "shift"] },
+      "to": {
+        "action": "move_window_to_adjacent_display",
+        "direction": "down"
+      }
+    },
+    {
+      "from": { "key": "return_or_enter", "modifiers": ["option", "shift"] },
+      "to": {
+        "action": "activate_application",
+        "bundle_identifier": "com.github.wez.wezterm",
+        "already_active_behavior": "switch_to_last"
+      }
+    }
+  ]
+}
