@@ -3,6 +3,7 @@ import Cocoa
 import Carbon.HIToolbox
 
 enum KeyConfigSupport {
+    static let configBasePath = ".config/tony-toy"
     static let keyboardANSI = Int(kKeyboardANSI)
     static let keyboardISO = Int(kKeyboardISO)
     static let keyboardJIS = Int(kKeyboardJIS)

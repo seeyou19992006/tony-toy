@@ -269,7 +269,7 @@ enum InputAliasRegistryError: Error, CustomStringConvertible {
 }
 
 final class InputAliasRegistryStore {
-    static let configRelativePath = ".config/mouse-volume/input-aliases.json"
+    static let configRelativePath = KeyConfigSupport.configBasePath + "/input-aliases.json"
     static let templateFileName = "input-aliases.default.json"
 
     let configURL: URL

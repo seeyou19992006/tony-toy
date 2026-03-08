@@ -59,7 +59,7 @@ enum HotkeyMappingConfigError: Error, CustomStringConvertible {
 }
 
 final class HotkeyMappingConfigStore {
-    static let configRelativePath = ".config/mouse-volume/hotkeys.json"
+    static let configRelativePath = KeyConfigSupport.configBasePath + "/hotkeys.json"
     static let templateFileName = "hotkeys.default.json"
     static let keyboardANSI = KeyConfigSupport.keyboardANSI
     static let keyboardISO = KeyConfigSupport.keyboardISO

@@ -47,7 +47,7 @@ enum CapsMappingConfigError: Error, CustomStringConvertible {
 }
 
 final class CapsMappingConfigStore {
-    static let configRelativePath = ".config/mouse-volume/caps-mappings.json"
+    static let configRelativePath = KeyConfigSupport.configBasePath + "/caps-mappings.json"
     static let templateFileName = "caps-mappings.default.json"
 
     let configURL: URL

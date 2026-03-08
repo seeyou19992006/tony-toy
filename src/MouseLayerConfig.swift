@@ -127,7 +127,7 @@ enum MouseLayerConfigError: Error, CustomStringConvertible {
 }
 
 final class MouseLayerConfigStore {
-    static let configRelativePath = ".config/mouse-volume/mouse-layer.json"
+    static let configRelativePath = KeyConfigSupport.configBasePath + "/mouse-layer.json"
     static let templateFileName = "mouse-layer.default.json"
 
     let configURL: URL
