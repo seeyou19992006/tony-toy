@@ -1,0 +1,981 @@
+import Foundation
+import AppKit
+
+/// 支持粘贴的 NSSecureTextField（系统默认禁止粘贴）
+class PasteableSecureTextField: NSSecureTextField {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // 拦截 Cmd+V，直接调用 NSTextField 的 paste: 绕过安全限制
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+            if let editor = currentEditor() {
+                editor.paste(nil)
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// 支持粘贴的 NSTextField（确保 Cmd+V 始终可用）
+class PasteableTextField: NSTextField {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+            if let editor = currentEditor() {
+                editor.paste(nil)
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// 支持 Cmd+V 粘贴的 NSPanel（sheet 模式下 performKeyEquivalent 可能不触发，通过 keyDown 拦截）
+class PasteablePanel: NSPanel {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // 让子视图的 performKeyEquivalent 先处理
+        if super.performKeyEquivalent(with: event) {
+            return true
+        }
+        return false
+    }
+    
+    override func keyDown(with event: NSEvent) {
+        // 拦截 Cmd+V，找到当前焦点输入框并执行粘贴
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+            if let field = firstResponder as? NSTextField, field.isEditable {
+                if let editor = field.currentEditor() {
+                    editor.paste(nil)
+                    return
+                }
+            }
+        }
+        super.keyDown(with: event)
+    }
+}
+
+/// 密码管理窗口控制器
+class PasswordManagerWindow: NSWindow, NSWindowDelegate {
+    let vaultService = VaultService()  // 改为 public
+    private var tableView: NSTableView?
+    private var searchField: NSSearchField?
+    private var statusLabel: NSTextField?
+    private var mainView: NSStackView?
+    private var unlockView: NSStackView?
+    private var masterPasswordInput: PasteableSecureTextField?
+    
+    /// 记录唤起面板前的前台应用，用于粘贴后恢复焦点
+    private var previousApp: NSRunningApplication?
+    
+    /// 搜索框键盘事件监控
+    private var searchFieldMonitor: Any?
+    
+    /// 当前选中粘贴的字段：默认密码
+    private var activeField: EntryField = .password
+    
+    /// 可切换的粘贴字段
+    enum EntryField: Int {
+        case username = 0
+        case password = 1
+    }
+    
+    init() {
+        let contentRect = NSRect(x: 0, y: 0, width: 450, height: 550)
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        self.title = "TonyPwd - 密码管理器"
+        self.minSize = NSSize(width: 350, height: 400)
+        self.delegate = self
+        self.isReleasedWhenClosed = false
+        self.level = .floating  // 保持在最前
+        self.center()  // 居中显示
+
+        setupUI()
+    }
+    
+    /// 重写 keyDown：处理 ESC 关闭面板/恢复焦点
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // ESC
+            if let addPanel = currentAddPanel {
+                endSheet(addPanel)
+            } else if let editPanel = currentEditPanel {
+                endSheet(editPanel)
+            } else {
+                let appToRestore = previousApp
+                orderOut(nil)
+                DispatchQueue.main.async {
+                    appToRestore?.activate()
+                }
+            }
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+    
+    private func setupUI() {
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 450, height: 550))
+        contentView = containerView
+        containerView.autoresizingMask = [.width, .height]
+        
+        // 创建解锁视图
+        unlockView = NSStackView(frame: containerView.bounds)
+        unlockView?.autoresizingMask = [.width, .height]
+        unlockView?.orientation = .vertical
+        unlockView?.spacing = 15
+        unlockView?.alignment = .centerX
+        unlockView?.edgeInsets = NSEdgeInsets(top: 100, left: 50, bottom: 100, right: 50)
+        
+        let lockIcon = NSTextField(labelWithString: "🔒")
+        lockIcon.font = NSFont.systemFont(ofSize: 60)
+        lockIcon.alignment = .center
+        unlockView?.addArrangedSubview(lockIcon)
+        
+        let titleLabel = NSTextField(labelWithString: "输入主密码")
+        titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.alignment = .center
+        unlockView?.addArrangedSubview(titleLabel)
+        
+        let passwordInput = PasteableSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
+        passwordInput.placeholderString = "主密码"
+        passwordInput.font = NSFont.systemFont(ofSize: 14)
+        passwordInput.target = self
+        passwordInput.action = #selector(unlockVault)
+        passwordInput.identifier = NSUserInterfaceItemIdentifier("masterPasswordInput")
+        unlockView?.addArrangedSubview(passwordInput)
+        masterPasswordInput = passwordInput  // 保存引用
+        
+        let unlockButton = NSButton(title: "解锁 / 创建", target: self, action: #selector(unlockVault))
+        unlockButton.bezelStyle = .rounded
+        unlockButton.keyEquivalent = "\r"
+        unlockView?.addArrangedSubview(unlockButton)
+        
+        containerView.addSubview(unlockView!)
+        
+        // 创建主视图（默认隐藏）
+        mainView = NSStackView(frame: containerView.bounds)
+        mainView?.autoresizingMask = [.width, .height]
+        mainView?.orientation = .vertical
+        mainView?.spacing = 10
+        mainView?.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        mainView?.isHidden = true
+        
+        // 顶部：搜索 + 添加
+        let topRow = NSStackView()
+        topRow.orientation = .horizontal
+        topRow.spacing = 8
+        
+        let search = NSSearchField(frame: NSRect(x: 0, y: 0, width: 380, height: 30))
+        search.placeholderString = "搜索密码..."
+        search.target = self
+        search.action = #selector(searchChanged)
+        topRow.addArrangedSubview(search)
+        searchField = search
+        
+        // 即时搜索：监听文本变化，绕过 NSSearchField 内置延迟
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(searchChanged),
+            name: NSControl.textDidChangeNotification,
+            object: search
+        )
+        
+        // 本地监控：搜索框键盘事件（回车粘贴、方向键导航、左右切换字段）
+        searchFieldMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+            
+            // ESC 键 - 关闭面板并恢复焦点（不需要搜索框焦点，全局生效）
+            if event.keyCode == 53 {
+                if let addPanel = self.currentAddPanel {
+                    self.endSheet(addPanel)
+                } else if let editPanel = self.currentEditPanel {
+                    self.endSheet(editPanel)
+                } else {
+                    let appToRestore = self.previousApp
+                    self.orderOut(nil)
+                    DispatchQueue.main.async {
+                        appToRestore?.activate()
+                    }
+                }
+                return nil
+            }
+            
+            // 以下快捷键仅在搜索框有焦点时生效
+            guard self.searchField?.currentEditor() != nil else { return event }
+            
+            switch event.keyCode {
+            case 36: // Return 键 - 粘贴当前选中行（或第一个匹配结果）
+                if let entry = self.selectedEntry() {
+                    self.pasteEntryValue(entry)
+                    return nil
+                }
+            case 125: // 下箭头 - 选中下一行
+                if let table = self.tableView {
+                    let filtered = self.vaultService.search(self.searchField?.stringValue ?? "")
+                    if !filtered.isEmpty {
+                        let current = table.selectedRow
+                        let next = current < 0 ? 0 : min(current + 1, filtered.count - 1)
+                        table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+                        table.scrollRowToVisible(next)
+                        return nil
+                    }
+                }
+            case 126: // 上箭头 - 选中上一行
+                if let table = self.tableView {
+                    let filtered = self.vaultService.search(self.searchField?.stringValue ?? "")
+                    if !filtered.isEmpty {
+                        let current = table.selectedRow
+                        let prev = current <= 0 ? 0 : max(current - 1, 0)
+                        table.selectRowIndexes(IndexSet(integer: prev), byExtendingSelection: false)
+                        table.scrollRowToVisible(prev)
+                        return nil
+                    }
+                }
+            case 124: // 右箭头 - 切换到密码
+                self.activeField = .password
+                self.refreshSelectedCell()
+                return nil
+            case 123: // 左箭头 - 切换到用户名
+                self.activeField = .username
+                self.refreshSelectedCell()
+                return nil
+            default:
+                break
+            }
+            return event
+        }
+        
+        let addButton = NSButton(title: "+ 添加", target: self, action: #selector(addEntry))
+        addButton.bezelStyle = .rounded
+        topRow.addArrangedSubview(addButton)
+        
+        mainView?.addArrangedSubview(topRow)
+        
+        // 中间：表格
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autoresizingMask = [.width, .height]
+        
+        let table = NSTableView()
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PasswordColumn"))
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        table.delegate = self
+        table.dataSource = self
+        table.target = self
+        table.doubleAction = #selector(pasteSelected)
+        table.usesAlternatingRowBackgroundColors = true
+        table.menu = buildTableMenu()
+        
+        scroll.documentView = table
+        mainView?.addArrangedSubview(scroll)
+        tableView = table
+        
+        // 底部：状态 + 锁定
+        let bottomRow = NSStackView()
+        bottomRow.orientation = .horizontal
+        bottomRow.spacing = 10
+        
+        let status = NSTextField(labelWithString: "0 个密码")
+        status.font = NSFont.systemFont(ofSize: 11)
+        status.textColor = NSColor.secondaryLabelColor
+        bottomRow.addArrangedSubview(status)
+        statusLabel = status
+        
+        bottomRow.addArrangedSubview(NSView())  // 弹簧
+        
+        let lockButton = NSButton(title: "🔒 锁定", target: self, action: #selector(lockVault))
+        lockButton.bezelStyle = .rounded
+        lockButton.font = NSFont.systemFont(ofSize: 11)
+        bottomRow.addArrangedSubview(lockButton)
+        
+        mainView?.addArrangedSubview(bottomRow)
+        
+        containerView.addSubview(mainView!)
+    }
+    
+    // MARK: - 显示控制
+
+    @objc func showMainView() {
+        unlockView?.isHidden = true
+        mainView?.isHidden = false
+        reloadData()
+        // 延迟设置焦点，等待窗口成为 key window
+        DispatchQueue.main.async {
+            self.makeFirstResponder(self.searchField)
+        }
+    }
+
+    @objc func showUnlockView() {
+        unlockView?.isHidden = false
+        mainView?.isHidden = true
+        // 延迟设置焦点，等待窗口成为 key window
+        DispatchQueue.main.async {
+            self.masterPasswordInput?.stringValue = ""
+            self.makeFirstResponder(self.masterPasswordInput)
+        }
+    }
+    
+    // MARK: - 操作
+    
+    @objc private func unlockVault() {
+        guard let password = masterPasswordInput?.stringValue, !password.isEmpty else { return }
+
+        do {
+            if vaultService.vaultExists {
+                try vaultService.unlock(masterPassword: password)
+            } else {
+                try vaultService.createVault(masterPassword: password)
+            }
+            showMainView()
+        } catch {
+            print("❌ Vault 错误: \(error)")
+            showErrorAlert(error.localizedDescription)
+            masterPasswordInput?.stringValue = ""
+        }
+    }
+    
+    private func showErrorAlert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "❌ 错误"
+        alert.addButton(withTitle: "确定")
+
+        // 使用 NSTextView 替代 NSTextField，使其可选中和复制
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 80))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 80))
+        textView.string = message
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = NSFont.systemFont(ofSize: 12)
+        textView.textColor = NSColor.labelColor
+        textView.backgroundColor = NSColor.windowBackgroundColor
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+
+        // 设置文本视图的容器
+        textView.autoresizingMask = [.width, .height]
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.runModal()
+    }
+    
+    @objc private func lockVault() {
+        vaultService.lock()
+        showUnlockView()
+    }
+    
+    @objc private func searchChanged() {
+        activeField = .password  // 搜索变化时重置为密码
+        reloadData()
+    }
+    
+    private var currentAddPanel: PasteablePanel?
+    
+    /// 构建带眼睛切换的密码输入行（安全输入框 + 明文输入框 + 眼睛按钮）
+    private func makePasswordRow(placeholder: String = "密码 (支持粘贴)", value: String = "") -> (view: NSView, field: PasteableSecureTextField) {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.identifier = NSUserInterfaceItemIdentifier("passwordRow")
+        
+        // 安全输入框（默认显示）
+        let secureField = PasteableSecureTextField()
+        secureField.placeholderString = placeholder
+        secureField.font = NSFont.systemFont(ofSize: 13)
+        secureField.identifier = NSUserInterfaceItemIdentifier("passwordField")
+        secureField.translatesAutoresizingMaskIntoConstraints = false
+        if !value.isEmpty {
+            secureField.stringValue = value
+        }
+        row.addSubview(secureField)
+        
+        // 明文输入框（默认隐藏，眼睛打开时显示）
+        let plainField = PasteableTextField()
+        plainField.placeholderString = placeholder
+        plainField.font = NSFont.systemFont(ofSize: 13)
+        plainField.identifier = NSUserInterfaceItemIdentifier("passwordPlainField")
+        plainField.translatesAutoresizingMaskIntoConstraints = false
+        plainField.isHidden = true
+        if !value.isEmpty {
+            plainField.stringValue = value
+        }
+        row.addSubview(plainField)
+        
+        // 眼睛按钮
+        let eyeBtn = NSButton()
+        eyeBtn.bezelStyle = .inline
+        eyeBtn.isBordered = false
+        eyeBtn.imagePosition = .imageOnly
+        eyeBtn.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示密码")
+        eyeBtn.alternateImage = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "隐藏密码")
+        eyeBtn.imageScaling = .scaleProportionallyDown
+        eyeBtn.setButtonType(.toggle)
+        eyeBtn.identifier = NSUserInterfaceItemIdentifier("panelEyeBtn")
+        eyeBtn.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(eyeBtn)
+        
+        eyeBtn.target = self
+        eyeBtn.action = #selector(togglePanelPasswordVisibility(_:))
+        
+        NSLayoutConstraint.activate([
+            // 安全输入框
+            secureField.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            secureField.trailingAnchor.constraint(equalTo: eyeBtn.leadingAnchor, constant: -4),
+            secureField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            secureField.heightAnchor.constraint(equalToConstant: 28),
+            
+            // 明文输入框（与安全输入框完全重叠）
+            plainField.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            plainField.trailingAnchor.constraint(equalTo: eyeBtn.leadingAnchor, constant: -4),
+            plainField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            plainField.heightAnchor.constraint(equalToConstant: 28),
+            
+            // 眼睛按钮
+            eyeBtn.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            eyeBtn.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            eyeBtn.widthAnchor.constraint(equalToConstant: 24),
+            eyeBtn.heightAnchor.constraint(equalToConstant: 24),
+            
+            row.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        
+        return (row, secureField)
+    }
+    
+    /// 面板中眼睛按钮切换密码明文/隐藏
+    @objc private func togglePanelPasswordVisibility(_ sender: NSButton) {
+        guard let rowView = sender.superview else { return }
+        guard let secureField = rowView.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField,
+              let plainField = rowView.subviews.first(where: { $0.identifier?.rawValue == "passwordPlainField" }) as? NSTextField else { return }
+        
+        let showPlain = sender.state == .on
+        if showPlain {
+            // 同步值：安全框 → 明文框
+            plainField.stringValue = secureField.stringValue
+        } else {
+            // 同步值：明文框 → 安全框
+            secureField.stringValue = plainField.stringValue
+        }
+        secureField.isHidden = showPlain
+        plainField.isHidden = !showPlain
+    }
+    
+    @objc private func addEntry() {
+        // 避免重复打开
+        guard currentAddPanel == nil && currentEditPanel == nil else { return }
+        
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 230),
+                           styleMask: [.titled, .closable],
+                           backing: .buffered,
+                           defer: false)
+        panel.title = "添加密码"
+        panel.isReleasedWhenClosed = false
+        
+        let container = NSStackView(frame: panel.contentView!.bounds)
+        container.orientation = .vertical
+        container.spacing = 12
+        container.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        
+        let nameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        nameField.placeholderString = "服务名"
+        nameField.font = NSFont.systemFont(ofSize: 13)
+        nameField.identifier = NSUserInterfaceItemIdentifier("nameField")
+        container.addArrangedSubview(nameField)
+        
+        let usernameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        usernameField.placeholderString = "用户名"
+        usernameField.font = NSFont.systemFont(ofSize: 13)
+        usernameField.identifier = NSUserInterfaceItemIdentifier("usernameField")
+        container.addArrangedSubview(usernameField)
+        
+        let passwordRow = makePasswordRow()
+        container.addArrangedSubview(passwordRow.view)
+        
+        let buttonRow = NSStackView()
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 10
+        
+        let cancelBtn = NSButton(title: "取消", target: self, action: #selector(closeAddPanel))
+        cancelBtn.bezelStyle = .rounded
+        buttonRow.addArrangedSubview(cancelBtn)
+        
+        buttonRow.addArrangedSubview(NSView())
+        
+        let saveBtn = NSButton(title: "保存", target: nil, action: nil)
+        saveBtn.bezelStyle = .rounded
+        saveBtn.bezelColor = NSColor.controlAccentColor
+        saveBtn.keyEquivalent = "\r"
+        buttonRow.addArrangedSubview(saveBtn)
+        
+        container.addArrangedSubview(buttonRow)
+        panel.contentView?.addSubview(container)
+        
+        saveBtn.target = self
+        saveBtn.action = #selector(saveNewEntry)
+        currentAddPanel = panel
+
+        // 以 sheet 模态显示
+        self.beginSheet(panel) { [weak self] _ in
+            self?.currentAddPanel = nil
+        }
+        DispatchQueue.main.async {
+            panel.makeFirstResponder(nameField)
+        }
+    }
+    
+    @objc private func closeAddPanel() {
+        guard let panel = currentAddPanel else { return }
+        self.endSheet(panel)
+    }
+    
+    @objc private func saveNewEntry() {
+        guard let panel = currentAddPanel else { return }
+        guard let container = panel.contentView?.subviews.first as? NSStackView else { return }
+
+        let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
+        let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
+        // 密码：安全框或明文框（眼睛切换时只有一个可见）
+        let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
+        let passwordPlainField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordPlainField" }) as? NSTextField
+        let passwordValue = passwordSecureField?.isHidden == true ? passwordPlainField?.stringValue : passwordSecureField?.stringValue
+
+        guard let name = nameField?.stringValue, !name.isEmpty,
+              let password = passwordValue, !password.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "请填写必填项"
+            alert.addButton(withTitle: "确定")
+            alert.beginSheetModal(for: self)
+            return
+        }
+        
+        do {
+            try vaultService.addEntry(
+                name: name,
+                username: usernameField?.stringValue ?? "",
+                password: password
+            )
+            self.endSheet(panel)
+            reloadData()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "保存失败"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "确定")
+            alert.beginSheetModal(for: self)
+        }
+    }
+    
+    @objc private func pasteSelected() {
+        guard let table = tableView, table.selectedRow >= 0 else { return }
+        let filtered = vaultService.search(searchField?.stringValue ?? "")
+        guard table.selectedRow < filtered.count else { return }
+        pasteEntryValue(filtered[table.selectedRow])
+    }
+    
+    // MARK: - 编辑条目
+    
+    private var currentEditPanel: PasteablePanel?
+    private var editingEntryId: UUID?
+    
+    @objc private func editEntry() {
+        guard let entry = selectedEntry() else { return }
+        // 避免重复打开
+        guard currentAddPanel == nil && currentEditPanel == nil else { return }
+        
+        editingEntryId = entry.id
+        
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 230),
+                           styleMask: [.titled, .closable],
+                           backing: .buffered,
+                           defer: false)
+        panel.title = "编辑密码"
+        panel.isReleasedWhenClosed = false
+        
+        let container = NSStackView(frame: panel.contentView!.bounds)
+        container.orientation = .vertical
+        container.spacing = 12
+        container.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        
+        let nameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        nameField.placeholderString = "服务名"
+        nameField.font = NSFont.systemFont(ofSize: 13)
+        nameField.stringValue = entry.name
+        nameField.identifier = NSUserInterfaceItemIdentifier("nameField")
+        container.addArrangedSubview(nameField)
+        
+        let usernameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        usernameField.placeholderString = "用户名"
+        usernameField.font = NSFont.systemFont(ofSize: 13)
+        usernameField.stringValue = entry.username
+        usernameField.identifier = NSUserInterfaceItemIdentifier("usernameField")
+        container.addArrangedSubview(usernameField)
+        
+        let passwordRow = makePasswordRow(value: entry.password)
+        container.addArrangedSubview(passwordRow.view)
+        
+        let buttonRow = NSStackView()
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 10
+        
+        let cancelBtn = NSButton(title: "取消", target: self, action: #selector(closeEditPanel))
+        cancelBtn.bezelStyle = .rounded
+        buttonRow.addArrangedSubview(cancelBtn)
+        
+        buttonRow.addArrangedSubview(NSView())
+        
+        let saveBtn = NSButton(title: "保存", target: nil, action: nil)
+        saveBtn.bezelStyle = .rounded
+        saveBtn.bezelColor = NSColor.controlAccentColor
+        saveBtn.keyEquivalent = "\r"
+        buttonRow.addArrangedSubview(saveBtn)
+        
+        container.addArrangedSubview(buttonRow)
+        panel.contentView?.addSubview(container)
+        
+        saveBtn.target = self
+        saveBtn.action = #selector(saveEditEntry)
+        currentEditPanel = panel
+        
+        // 以 sheet 模态显示
+        self.beginSheet(panel) { [weak self] _ in
+            self?.currentEditPanel = nil
+        }
+        DispatchQueue.main.async {
+            panel.makeFirstResponder(nameField)
+        }
+    }
+    
+    @objc private func closeEditPanel() {
+        guard let panel = currentEditPanel else { return }
+        self.endSheet(panel)
+    }
+    
+    @objc private func saveEditEntry() {
+        guard let panel = currentEditPanel,
+              let entryId = editingEntryId else { return }
+        guard let container = panel.contentView?.subviews.first as? NSStackView else { return }
+        
+        let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
+        let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
+        // 密码：安全框或明文框（眼睛切换时只有一个可见）
+        let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
+        let passwordPlainField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordPlainField" }) as? NSTextField
+        let passwordValue = passwordSecureField?.isHidden == true ? passwordPlainField?.stringValue : passwordSecureField?.stringValue
+        
+        guard let name = nameField?.stringValue, !name.isEmpty,
+              let password = passwordValue, !password.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "请填写必填项"
+            alert.addButton(withTitle: "确定")
+            alert.beginSheetModal(for: panel)
+            return
+        }
+        
+        // 找到原条目并更新
+        let updated = vaultService.entries.first { $0.id == entryId }
+        guard var entry = updated else { return }
+        entry.name = name
+        entry.username = usernameField?.stringValue ?? ""
+        entry.password = password
+        entry.updatedAt = Date()
+        
+        do {
+            try vaultService.updateEntry(entry)
+            self.endSheet(panel)
+            reloadData()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "保存失败"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "确定")
+            alert.beginSheetModal(for: panel)
+        }
+    }
+    
+    @objc private func deleteEntry() {
+        guard let entry = selectedEntry() else { return }
+        let alert = NSAlert()
+        alert.messageText = "删除确认"
+        alert.informativeText = "确定要删除「\(entry.name)」吗？"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            do {
+                try vaultService.deleteEntry(id: entry.id)
+                reloadData()
+            } catch {
+                let errAlert = NSAlert()
+                errAlert.messageText = "删除失败"
+                errAlert.informativeText = error.localizedDescription
+                errAlert.addButton(withTitle: "确定")
+                errAlert.runModal()
+            }
+        }
+    }
+    
+    /// 眼睛按钮：切换密码明文/隐藏
+    @objc private func togglePasswordVisibility(_ sender: NSButton) {
+        guard tableView != nil else { return }
+        let row = sender.tag
+        let filtered = vaultService.search(searchField?.stringValue ?? "")
+        guard row >= 0, row < filtered.count else { return }
+        
+        let entry = filtered[row]
+        let isShown = sender.state == .on
+        
+        // 找到同一 passwordTag 内的 passwordLabel
+        if let passwordTag = sender.superview,
+           let passwordLabel = passwordTag.subviews.first(where: { $0.identifier?.rawValue == "passwordLabel" }) as? NSTextField {
+            passwordLabel.stringValue = isShown ? entry.password : String(repeating: "•", count: entry.password.count)
+        }
+    }
+    
+    /// 根据 activeField 粘贴选中条目的用户名或密码
+    private func pasteEntryValue(_ entry: PasswordEntry) {
+        let value: String
+        switch activeField {
+        case .username:
+            value = entry.username
+        case .password:
+            value = entry.password
+        }
+        
+        // 复制到剪贴板
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+        
+        // 保存需要恢复焦点的应用
+        let appToRestore = previousApp
+        
+        // 隐藏窗口
+        orderOut(nil)
+        
+        // 恢复前台应用焦点后立即粘贴
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if let app = appToRestore {
+                app.activate()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                PasswordPaster.paste(password: value)
+            }
+        }
+    }
+    
+    /// 在窗口显示前记录当前前台应用
+    func recordPreviousApp() {
+        previousApp = NSWorkspace.shared.frontmostApplication
+    }
+    
+    /// 获取当前选中的条目（表格选中行，若无选中则取第一个）
+    private func selectedEntry() -> PasswordEntry? {
+        guard let table = tableView else { return nil }
+        let filtered = vaultService.search(searchField?.stringValue ?? "")
+        if filtered.isEmpty { return nil }
+        let row = table.selectedRow
+        // 无选中或选中行无效时取第一个
+        let index = (row >= 0 && row < filtered.count) ? row : 0
+        return filtered[index]
+    }
+    
+    private func reloadData() {
+        tableView?.reloadData()
+        let filtered = vaultService.search(searchField?.stringValue ?? "")
+        statusLabel?.stringValue = "\(filtered.count) 个密码"
+        // 延迟选行，等表格布局完成后再选中，避免行索引越界
+        if !filtered.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                self?.tableView?.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+        }
+    }
+}
+
+// MARK: - TableView 代理
+
+extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        vaultService.search(searchField?.stringValue ?? "").count
+    }
+    
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let filtered = vaultService.search(searchField?.stringValue ?? "")
+        guard row < filtered.count else { return nil }
+        
+        let entry = filtered[row]
+        let isSelected = tableView.selectedRow == row
+        
+        let cell = NSTableCellView()
+        cell.identifier = NSUserInterfaceItemIdentifier("Cell")
+        
+        // --- 使用 Auto Layout 实现自适应宽度 ---
+        
+        // 服务名
+        let nameLabel = NSTextField(labelWithString: entry.name)
+        nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(nameLabel)
+        
+        // 用户名 tag
+        let usernameTag = NSView()
+        usernameTag.identifier = NSUserInterfaceItemIdentifier("usernameTag")
+        usernameTag.wantsLayer = true
+        usernameTag.layer?.cornerRadius = 6
+        usernameTag.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(usernameTag)
+        
+        let usernameLabel = NSTextField(labelWithString: entry.username.isEmpty ? "-" : entry.username)
+        usernameLabel.font = NSFont.systemFont(ofSize: 12)
+        usernameLabel.textColor = NSColor.labelColor
+        usernameLabel.lineBreakMode = .byTruncatingTail
+        usernameLabel.identifier = NSUserInterfaceItemIdentifier("usernameLabel")
+        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        usernameTag.addSubview(usernameLabel)
+        
+        // 密码 tag
+        let passwordTag = NSView()
+        passwordTag.identifier = NSUserInterfaceItemIdentifier("passwordTag")
+        passwordTag.wantsLayer = true
+        passwordTag.layer?.cornerRadius = 6
+        passwordTag.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(passwordTag)
+        
+        // 密码圆点
+        let maskedPassword = String(repeating: "•", count: entry.password.count)
+        let passwordLabel = NSTextField(labelWithString: maskedPassword)
+        passwordLabel.font = NSFont.systemFont(ofSize: 12)
+        passwordLabel.textColor = NSColor.labelColor
+        passwordLabel.lineBreakMode = .byTruncatingTail
+        passwordLabel.identifier = NSUserInterfaceItemIdentifier("passwordLabel")
+        passwordLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        passwordLabel.translatesAutoresizingMaskIntoConstraints = false
+        passwordTag.addSubview(passwordLabel)
+        
+        // 眼睛按钮
+        let eyeBtn = NSButton()
+        eyeBtn.identifier = NSUserInterfaceItemIdentifier("eyeBtn")
+        eyeBtn.bezelStyle = .inline
+        eyeBtn.isBordered = false
+        eyeBtn.imagePosition = .imageOnly
+        eyeBtn.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示密码")
+        eyeBtn.alternateImage = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "隐藏密码")
+        eyeBtn.imageScaling = .scaleProportionallyDown
+        eyeBtn.setButtonType(.toggle)
+        eyeBtn.tag = row
+        eyeBtn.target = self
+        eyeBtn.action = #selector(togglePasswordVisibility(_:))
+        eyeBtn.translatesAutoresizingMaskIntoConstraints = false
+        passwordTag.addSubview(eyeBtn)
+        
+        // --- 约束 ---
+        NSLayoutConstraint.activate([
+            // 服务名：左侧固定宽度区域
+            nameLabel.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            nameLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            nameLabel.widthAnchor.constraint(equalToConstant: 100),
+            
+            // usernameTag：中间弹性区域
+            usernameTag.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            usernameTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            usernameTag.heightAnchor.constraint(equalToConstant: 30),
+            
+            // passwordTag：右侧固定（含眼睛），靠右对齐
+            passwordTag.leadingAnchor.constraint(equalTo: usernameTag.trailingAnchor, constant: 10),
+            passwordTag.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+            passwordTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            passwordTag.heightAnchor.constraint(equalToConstant: 30),
+            
+            // username 内部
+            usernameLabel.leadingAnchor.constraint(equalTo: usernameTag.leadingAnchor, constant: 8),
+            usernameLabel.trailingAnchor.constraint(equalTo: usernameTag.trailingAnchor, constant: -8),
+            usernameLabel.centerYAnchor.constraint(equalTo: usernameTag.centerYAnchor),
+            
+            // password 内部：label 在左，眼睛在右
+            passwordLabel.leadingAnchor.constraint(equalTo: passwordTag.leadingAnchor, constant: 8),
+            passwordLabel.trailingAnchor.constraint(equalTo: eyeBtn.leadingAnchor, constant: -4),
+            passwordLabel.centerYAnchor.constraint(equalTo: passwordTag.centerYAnchor),
+            
+            eyeBtn.trailingAnchor.constraint(equalTo: passwordTag.trailingAnchor, constant: -4),
+            eyeBtn.centerYAnchor.constraint(equalTo: passwordTag.centerYAnchor),
+            eyeBtn.widthAnchor.constraint(equalToConstant: 22),
+            eyeBtn.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        
+        // 高亮当前选中字段
+        if isSelected {
+            applyFieldHighlight(usernameTag: usernameTag, passwordTag: passwordTag)
+        } else {
+            usernameTag.layer?.backgroundColor = NSColor.clear.cgColor
+            passwordTag.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+        
+        return cell
+    }
+    
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        return 48
+    }
+    
+    /// 选中行变化时刷新高亮
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let table = tableView else { return }
+        // 清除旧行高亮，设置新行高亮
+        if let userInfo = notification.userInfo,
+           let oldRows = userInfo["NSOldSelectedRows"] as? IndexSet {
+            for row in oldRows where row >= 0 && row < table.numberOfRows {
+                if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) {
+                    cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
+                    cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
+                }
+            }
+        }
+        refreshSelectedCell()
+    }
+    
+    /// 刷新选中行的字段高亮
+    private func refreshSelectedCell() {
+        guard let table = tableView, table.selectedRow >= 0, table.selectedRow < table.numberOfRows else { return }
+        if let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: false) {
+            let usernameTag = cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }
+            let passwordTag = cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }
+            applyFieldHighlight(usernameTag: usernameTag, passwordTag: passwordTag)
+        }
+    }
+    
+    /// 根据当前 activeField 高亮对应的 tag
+    private func applyFieldHighlight(usernameTag: NSView?, passwordTag: NSView?) {
+        let accentColor = NSColor.controlAccentColor.withAlphaComponent(0.2)
+        let inactiveColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1)
+        
+        switch activeField {
+        case .username:
+            usernameTag?.layer?.backgroundColor = accentColor.cgColor
+            passwordTag?.layer?.backgroundColor = inactiveColor.cgColor
+        case .password:
+            usernameTag?.layer?.backgroundColor = inactiveColor.cgColor
+            passwordTag?.layer?.backgroundColor = accentColor.cgColor
+        }
+    }
+    
+    /// 构建表格右键菜单
+    private func buildTableMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "编辑", action: #selector(editEntry), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "删除", action: #selector(deleteEntry), keyEquivalent: ""))
+        return menu
+    }
+}

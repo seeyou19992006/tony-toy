@@ -18,6 +18,9 @@ final class VolumeScrollEngine {
     /// 加速度系数重置时间（无事件后多久重置，秒）
     var accelerationResetInterval: TimeInterval = 0.1
 
+    /// 是否使用系统事件控制音量（推荐，对蓝牙设备更友好）
+    var useSystemEvents: Bool = true
+
     // MARK: - 内部状态
 
     /// 当前音量值（以 1/64 为单位，范围 0-64）
@@ -98,6 +101,46 @@ final class VolumeScrollEngine {
         let direction = delta > 0 ? 1 : (delta < 0 ? -1 : 0)
         guard direction != 0 else { return }
 
+        if useSystemEvents {
+            // 系统事件模式：带加速度
+            // 检查是否需要重置连续滚动计数
+            let timeSinceLastScroll = now.timeIntervalSince(lastScrollTime)
+            let shouldReset =
+                timeSinceLastScroll > accelerationResetInterval
+                || direction != lastScrollDirection
+
+            if shouldReset {
+                consecutiveScrollCount = 0
+            }
+
+            consecutiveScrollCount += 1
+            lastScrollTime = now
+            lastScrollDirection = direction
+
+            // 计算加速度系数: count * accelerationIncrement + 1
+            let accelerationFactor = Double(consecutiveScrollCount) * accelerationIncrement + 1.0
+            let ticksToSend = max(1, Int(Double(step) * accelerationFactor))
+
+            // 发送事件，带间隔确保系统处理
+            for i in 0..<ticksToSend {
+                postFineVolumeKey(increase: direction > 0, showHUD: i == ticksToSend - 1)
+                if i < ticksToSend - 1 {
+                    usleep(10000) // 10ms 间隔
+                }
+            }
+
+            // 更新内部状态
+            currentVolume = max(0, min(64, currentVolume + direction * ticksToSend))
+
+            // 通知外部
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onVolumeChanged?(Float32(self.currentVolume) / 64.0)
+            }
+            return
+        }
+
+        // CoreAudio 模式：原有逻辑（带加速度）
         // 检查是否需要重置连续滚动计数
         let timeSinceLastScroll = now.timeIntervalSince(lastScrollTime)
         let shouldReset =
@@ -132,18 +175,9 @@ final class VolumeScrollEngine {
 
         // 如果音量变化了，应用它
         if clamped != currentVolume {
-            // 确定方向（用于HUD）
-            let volumeDirection = clamped > currentVolume ? 1 : -1
-
             // 应用音量
             setVolume(steps: clamped)
             currentVolume = clamped
-
-            // 触发系统 HUD 显示
-            if now.timeIntervalSince(lastHudTime) >= hudInterval {
-                postFineVolumeKey(increase: volumeDirection > 0)
-                lastHudTime = now
-            }
 
             // 通知外部
             DispatchQueue.main.async { [weak self] in
@@ -212,7 +246,7 @@ final class VolumeScrollEngine {
         return 32  // 默认值
     }
 
-    /// 设置音量 (0-64)
+    /// 设置音量 (0-64) - 仅在 CoreAudio 模式下使用
     private func setVolume(steps: Int) {
         guard deviceID != 0 else { return }
 
@@ -231,7 +265,7 @@ final class VolumeScrollEngine {
     }
 
     /// 触发系统音量 HUD 显示
-    private func postFineVolumeKey(increase: Bool) {
+    private func postFineVolumeKey(increase: Bool, showHUD: Bool = true) {
         let keyType: Int32 = increase ? 0 : 1
         let flags = NSEvent.ModifierFlags(rawValue: 0xA0000)
         let dataDown = Int((keyType << 16) | (0xA << 8))
@@ -252,7 +286,28 @@ final class VolumeScrollEngine {
             event?.cgEvent?.post(tap: .cghidEventTap)
         }
 
-        post(dataDown)
-        post(dataUp)
+        if showHUD {
+            post(dataDown)
+            post(dataUp)
+        } else {
+            // 不显示 HUD，但仍然发送音量事件
+            // 使用不同的 data2 值可以阻止 HUD 显示
+            func postSilent(_ data: Int) {
+                let event = NSEvent.otherEvent(
+                    with: .systemDefined,
+                    location: .zero,
+                    modifierFlags: flags,
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    subtype: 8,
+                    data1: data,
+                    data2: 1  // 改为 1 可以阻止 HUD 显示
+                )
+                event?.cgEvent?.post(tap: .cghidEventTap)
+            }
+            postSilent(dataDown)
+            postSilent(dataUp)
+        }
     }
 }

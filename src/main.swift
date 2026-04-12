@@ -1,5 +1,9 @@
 import Foundation
 import Cocoa
+import Carbon
+
+// 全局变量用于 Carbon 回调
+weak var _PasswordManagerSharedSelf: AppDelegate?
 
 // 强效单实例检测：利用内核级文件锁 (flock)
 // 即使用户强杀进程 (kill -9)，内核也会自动释放锁。
@@ -42,10 +46,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotkeyController = HotkeyMapperController()
     private let capsController = CapsMapperController()
     private let menuStateStore = MenuStateStore()
-    
+    private let passwordManager = PasswordManagerWindow()
+    private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
+
     private var isVolumeEnabled = true
     private var isHotkeyEnabled = true
     private var isCapsEnabled = true
+    private var isPasswordManagerEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let persistedState = menuStateStore.load()
@@ -55,18 +62,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
-        
+
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
-        
+
         mouseLayerController.onVolumeChanged = { [weak self] volume in
             self?.updateStatusIcon(volume: volume)
         }
-        
+
         // 初始启动
         mouseLayerController.setEnabled(isVolumeEnabled)
         hotkeyController.setEnabled(isHotkeyEnabled)
         capsController.setEnabled(isCapsEnabled)
+        
+        // 注册密码管理器快捷键 (Cmd+Shift+V)
+        registerPasswordManagerHotkey()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -89,7 +99,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildMenu() {
         let menu = NSMenu()
-        
+
         // 增加版本显示 (不可点击)
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1"
         let versionItem = NSMenuItem(title: "TonyToy v\(version)", action: nil, keyEquivalent: "")
@@ -100,7 +110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let volItem = NSMenuItem(title: "鼠标侧键层", action: #selector(toggleVolume), keyEquivalent: "")
         volItem.state = isVolumeEnabled ? .on : .off
         menu.addItem(volItem)
-        
+
         let capsItem = NSMenuItem(title: "Caps 键层", action: #selector(toggleCaps), keyEquivalent: "")
         capsItem.state = isCapsEnabled ? .on : .off
         menu.addItem(capsItem)
@@ -110,8 +120,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(hotkeyItem)
         
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         
+        let pwdItem = NSMenuItem(title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
+        pwdItem.state = isPasswordManagerEnabled ? .on : .off
+        menu.addItem(pwdItem)
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
         statusItem?.menu = menu
     }
 
@@ -134,6 +150,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyController.setEnabled(isHotkeyEnabled)
         persistMenuState()
         buildMenu()
+    }
+    
+    @objc private func showPasswordManager() {
+        if !passwordManager.isVisible {
+            // 记录当前前台应用，以便粘贴密码时恢复焦点
+            passwordManager.recordPreviousApp()
+
+            // 先激活应用，确保窗口能获得焦点
+            NSApp.activate(ignoringOtherApps: true)
+
+            // 检查是否已解锁
+            if !passwordManager.vaultService.isUnlocked {
+                passwordManager.showUnlockView()
+            } else {
+                passwordManager.showMainView()
+            }
+            passwordManager.makeKeyAndOrderFront(nil)
+        } else {
+            passwordManager.orderOut(nil)
+        }
+    }
+    
+    private func registerPasswordManagerHotkey() {
+        // 防止重复安装 handler
+        guard !isHotkeyHandlerInstalled else { return }
+        isHotkeyHandlerInstalled = true
+
+        // 使用 Carbon 注册全局快捷键
+        var hotKeyRef: EventHotKeyRef?
+        let modifierKeys: UInt32 = UInt32(cmdKey) | UInt32(shiftKey)
+        let keyCode: UInt32 = 9  // V 键
+
+        var spec = EventHotKeyID()
+        spec.signature = 1953390948  // 'PwdM'
+        spec.id = 1
+
+        let status = RegisterEventHotKey(
+            keyCode,
+            modifierKeys,
+            spec,
+            GetEventDispatcherTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        if status == noErr {
+            // 使用全局变量避免闭包捕获
+            _PasswordManagerSharedSelf = self
+
+            let handler: EventHandlerUPP = { _, _, _ in
+                DispatchQueue.main.async {
+                    _PasswordManagerSharedSelf?.showPasswordManager()
+                }
+                return noErr
+            }
+
+            var eventTypeSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            let userData: UnsafeMutableRawPointer? = nil
+            InstallEventHandler(GetEventDispatcherTarget(), handler, 1, &eventTypeSpec, userData, nil)
+            print("✅ 密码管理器快捷键已注册: Cmd+Shift+V")
+        }
     }
 
     private func persistMenuState() {
