@@ -55,9 +55,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPasswordManagerEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // tooltip 延迟 300ms
-        UserDefaults.standard.set(300, forKey: "NSInitialToolTipDelay")
-
         let persistedState = menuStateStore.load()
         isVolumeEnabled = persistedState.isVolumeEnabled
         isCapsEnabled = persistedState.isCapsEnabled
