@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // MARK: - Vault 服务
 class VaultService {
@@ -7,11 +8,6 @@ class VaultService {
     private let vaultJSONLURL: URL
     private var masterKeyData: Data?  // 存储派生的密钥数据
 
-    // 固定 salt + PBKDF2 参数，不同机器共享，安全性靠主密码强度 + 迭代次数
-    private static let salt = Data([
-        0x4a, 0x7c, 0x91, 0x23, 0xd6, 0x58, 0xb4, 0x1f,
-        0xe0, 0xa2, 0x37, 0x9c, 0x6b, 0x50, 0x8d, 0x3f
-    ])
     private static let pbkdf2Rounds = 100000
 
     var isUnlocked: Bool { masterKeyData != nil }
@@ -33,9 +29,15 @@ class VaultService {
         vaultJSONLURL = configDir.appendingPathComponent("vault.jsonl")
     }
 
+    /// salt 由主密码的 SHA256 派生，不存储，跨机器一致
+    private func salt(from password: String) -> Data {
+        Data(SHA256.hash(data: Data(password.utf8)))
+    }
+
     /// 首次创建 vault（写空 JSONL）
     func createVault(masterPassword: String) throws {
-        masterKeyData = pbkdf2(password: masterPassword, salt: Self.salt,
+        let salt = self.salt(from: masterPassword)
+        masterKeyData = pbkdf2(password: masterPassword, salt: salt,
                                keyByteCount: 32, rounds: Self.pbkdf2Rounds)
         entries = []
         try Data().write(to: vaultJSONLURL, options: .atomic)
@@ -47,7 +49,8 @@ class VaultService {
             throw VaultError.vaultNotFound
         }
 
-        let keyData = pbkdf2(password: masterPassword, salt: Self.salt,
+        let salt = self.salt(from: masterPassword)
+        let keyData = pbkdf2(password: masterPassword, salt: salt,
                              keyByteCount: 32, rounds: Self.pbkdf2Rounds)
 
         // 逐行读 JSONL，全量验证
