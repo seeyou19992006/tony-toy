@@ -19,7 +19,7 @@ class VaultCryptoService {
         let aesNonce = try AES.GCM.Nonce(data: nonce)
         // 从 data 拆出 ciphertext 和 tag（tag 固定 16 字节，在末尾）
         let tagLength = 16
-        guard data.count > tagLength else {
+        guard data.count >= tagLength else {
             throw VaultError.encryptionFailed
         }
         let ciphertext = data.prefix(data.count - tagLength)
