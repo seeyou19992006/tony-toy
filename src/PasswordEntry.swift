@@ -3,6 +3,7 @@ import Foundation
 struct PasswordEntry: Identifiable, Codable {
     let id: UUID
     var name: String        // 网站/服务名
+    var host: String        // IP 或域名
     var username: String
     var password: String
     var notes: String
@@ -14,6 +15,7 @@ struct PasswordEntry: Identifiable, Codable {
 struct EncryptedEntry: Codable {
     let id: UUID
     var name: String
+    var host: String
     var username: String
     var nonce: Data         // 12 字节随机，每条独立
     var password: Data      // AES-GCM ciphertext + tag

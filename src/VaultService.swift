@@ -81,15 +81,16 @@ class VaultService {
             guard let plain = String(data: plainData, encoding: .utf8) else {
                 throw VaultError.wrongPassword
             }
-            loaded.append(PasswordEntry(
-                id: encEntry.id,
-                name: encEntry.name,
-                username: encEntry.username,
-                password: plain,
-                notes: encEntry.notes,
-                createdAt: encEntry.createdAt,
-                updatedAt: encEntry.updatedAt
-            ))
+                loaded.append(PasswordEntry(
+                    id: encEntry.id,
+                    name: encEntry.name,
+                    host: encEntry.host,
+                    username: encEntry.username,
+                    password: plain,
+                    notes: encEntry.notes,
+                    createdAt: encEntry.createdAt,
+                    updatedAt: encEntry.updatedAt
+                ))
         }
 
         masterKeyData = keyData
@@ -104,12 +105,13 @@ class VaultService {
 
     // MARK: - CRUD
 
-    func addEntry(name: String, username: String, password: String, notes: String = "") throws {
+    func addEntry(name: String, host: String = "", username: String, password: String, notes: String = "") throws {
         guard isUnlocked else { throw VaultError.notUnlocked }
 
         let entry = PasswordEntry(
             id: UUID(),
             name: name,
+            host: host,
             username: username,
             password: password,
             notes: notes,
@@ -138,6 +140,7 @@ class VaultService {
         if query.isEmpty { return entries }
         return entries.filter {
             $0.name.localizedCaseInsensitiveContains(query) ||
+            $0.host.localizedCaseInsensitiveContains(query) ||
             $0.username.localizedCaseInsensitiveContains(query)
         }
     }
@@ -155,6 +158,7 @@ class VaultService {
             encEntries.append(EncryptedEntry(
                 id: entry.id,
                 name: entry.name,
+                host: entry.host,
                 username: entry.username,
                 nonce: nonce,
                 password: cipher,

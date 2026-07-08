@@ -75,6 +75,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     enum EntryField: Int {
         case username = 0
         case password = 1
+        case host = 2
     }
     
     init() {
@@ -233,12 +234,20 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                         return nil
                     }
                 }
-            case 124: // 右箭头 - 切换到密码
-                self.activeField = .password
+            case 124: // 右箭头 - 切换到下一个字段
+                switch self.activeField {
+                case .username: self.activeField = .host
+                case .host: self.activeField = .password
+                case .password: self.activeField = .username
+                }
                 self.refreshSelectedCell()
                 return nil
-            case 123: // 左箭头 - 切换到用户名
-                self.activeField = .username
+            case 123: // 左箭头 - 切换到上一个字段
+                switch self.activeField {
+                case .username: self.activeField = .password
+                case .password: self.activeField = .host
+                case .host: self.activeField = .username
+                }
                 self.refreshSelectedCell()
                 return nil
             default:
@@ -473,7 +482,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         // 避免重复打开
         guard currentAddPanel == nil && currentEditPanel == nil else { return }
         
-        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 230),
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 270),
                            styleMask: [.titled, .closable],
                            backing: .buffered,
                            defer: false)
@@ -490,6 +499,12 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         nameField.font = NSFont.systemFont(ofSize: 13)
         nameField.identifier = NSUserInterfaceItemIdentifier("nameField")
         container.addArrangedSubview(nameField)
+        
+        let hostField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        hostField.placeholderString = "IP / 域名"
+        hostField.font = NSFont.systemFont(ofSize: 13)
+        hostField.identifier = NSUserInterfaceItemIdentifier("hostField")
+        container.addArrangedSubview(hostField)
         
         let usernameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
         usernameField.placeholderString = "用户名"
@@ -542,6 +557,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         guard let container = panel.contentView?.subviews.first as? NSStackView else { return }
 
         let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
+        let hostField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "hostField" }) as? NSTextField
         let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
         // 密码：安全框或明文框（眼睛切换时只有一个可见）
         let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
@@ -560,6 +576,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         do {
             try vaultService.addEntry(
                 name: name,
+                host: hostField?.stringValue ?? "",
                 username: usernameField?.stringValue ?? "",
                 password: password
             )
@@ -593,7 +610,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         editingEntryId = entry.id
         
-        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 230),
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 270),
                            styleMask: [.titled, .closable],
                            backing: .buffered,
                            defer: false)
@@ -611,6 +628,13 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         nameField.stringValue = entry.name
         nameField.identifier = NSUserInterfaceItemIdentifier("nameField")
         container.addArrangedSubview(nameField)
+        
+        let hostField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        hostField.placeholderString = "IP / 域名"
+        hostField.font = NSFont.systemFont(ofSize: 13)
+        hostField.stringValue = entry.host
+        hostField.identifier = NSUserInterfaceItemIdentifier("hostField")
+        container.addArrangedSubview(hostField)
         
         let usernameField = PasteableTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
         usernameField.placeholderString = "用户名"
@@ -665,6 +689,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         guard let container = panel.contentView?.subviews.first as? NSStackView else { return }
         
         let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
+        let hostField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "hostField" }) as? NSTextField
         let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
         // 密码：安全框或明文框（眼睛切换时只有一个可见）
         let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
@@ -684,6 +709,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         let updated = vaultService.entries.first { $0.id == entryId }
         guard var entry = updated else { return }
         entry.name = name
+        entry.host = hostField?.stringValue ?? ""
         entry.username = usernameField?.stringValue ?? ""
         entry.password = password
         entry.updatedAt = Date()
@@ -749,6 +775,8 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
             value = entry.username
         case .password:
             value = entry.password
+        case .host:
+            value = entry.host
         }
         
         // 复制到剪贴板
@@ -830,6 +858,22 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(nameLabel)
         
+        // host tag
+        let hostTag = NSView()
+        hostTag.identifier = NSUserInterfaceItemIdentifier("hostTag")
+        hostTag.wantsLayer = true
+        hostTag.layer?.cornerRadius = 6
+        hostTag.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(hostTag)
+        
+        let hostLabel = NSTextField(labelWithString: entry.host.isEmpty ? "-" : entry.host)
+        hostLabel.font = NSFont.systemFont(ofSize: 12)
+        hostLabel.textColor = NSColor.labelColor
+        hostLabel.lineBreakMode = .byTruncatingTail
+        hostLabel.identifier = NSUserInterfaceItemIdentifier("hostLabel")
+        hostLabel.translatesAutoresizingMaskIntoConstraints = false
+        hostTag.addSubview(hostLabel)
+        
         // 用户名 tag
         let usernameTag = NSView()
         usernameTag.identifier = NSUserInterfaceItemIdentifier("usernameTag")
@@ -886,10 +930,15 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             // 服务名：左侧固定宽度区域
             nameLabel.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
             nameLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            nameLabel.widthAnchor.constraint(equalToConstant: 100),
+            nameLabel.widthAnchor.constraint(equalToConstant: 80),
             
-            // usernameTag：中间弹性区域
-            usernameTag.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            // hostTag：name 右侧
+            hostTag.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
+            hostTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            hostTag.heightAnchor.constraint(equalToConstant: 30),
+            
+            // usernameTag：host 右侧弹性区域
+            usernameTag.leadingAnchor.constraint(equalTo: hostTag.trailingAnchor, constant: 10),
             usernameTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             usernameTag.heightAnchor.constraint(equalToConstant: 30),
             
@@ -898,6 +947,11 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             passwordTag.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
             passwordTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             passwordTag.heightAnchor.constraint(equalToConstant: 30),
+            
+            // host 内部
+            hostLabel.leadingAnchor.constraint(equalTo: hostTag.leadingAnchor, constant: 8),
+            hostLabel.trailingAnchor.constraint(equalTo: hostTag.trailingAnchor, constant: -8),
+            hostLabel.centerYAnchor.constraint(equalTo: hostTag.centerYAnchor),
             
             // username 内部
             usernameLabel.leadingAnchor.constraint(equalTo: usernameTag.leadingAnchor, constant: 8),
@@ -917,8 +971,9 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
         
         // 高亮当前选中字段
         if isSelected {
-            applyFieldHighlight(usernameTag: usernameTag, passwordTag: passwordTag)
+            applyFieldHighlight(hostTag: hostTag, usernameTag: usernameTag, passwordTag: passwordTag)
         } else {
+            hostTag.layer?.backgroundColor = NSColor.clear.cgColor
             usernameTag.layer?.backgroundColor = NSColor.clear.cgColor
             passwordTag.layer?.backgroundColor = NSColor.clear.cgColor
         }
@@ -938,6 +993,7 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
            let oldRows = userInfo["NSOldSelectedRows"] as? IndexSet {
             for row in oldRows where row >= 0 && row < table.numberOfRows {
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) {
+                    cell.subviews.first { $0.identifier?.rawValue == "hostTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
                     cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
                     cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
                 }
@@ -950,24 +1006,31 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
     private func refreshSelectedCell() {
         guard let table = tableView, table.selectedRow >= 0, table.selectedRow < table.numberOfRows else { return }
         if let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: false) {
+            let hostTag = cell.subviews.first { $0.identifier?.rawValue == "hostTag" }
             let usernameTag = cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }
             let passwordTag = cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }
-            applyFieldHighlight(usernameTag: usernameTag, passwordTag: passwordTag)
+            applyFieldHighlight(hostTag: hostTag, usernameTag: usernameTag, passwordTag: passwordTag)
         }
     }
     
     /// 根据当前 activeField 高亮对应的 tag
-    private func applyFieldHighlight(usernameTag: NSView?, passwordTag: NSView?) {
+    private func applyFieldHighlight(hostTag: NSView?, usernameTag: NSView?, passwordTag: NSView?) {
         let accentColor = NSColor.controlAccentColor.withAlphaComponent(0.2)
         let inactiveColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1)
         
         switch activeField {
         case .username:
+            hostTag?.layer?.backgroundColor = inactiveColor.cgColor
             usernameTag?.layer?.backgroundColor = accentColor.cgColor
             passwordTag?.layer?.backgroundColor = inactiveColor.cgColor
         case .password:
+            hostTag?.layer?.backgroundColor = inactiveColor.cgColor
             usernameTag?.layer?.backgroundColor = inactiveColor.cgColor
             passwordTag?.layer?.backgroundColor = accentColor.cgColor
+        case .host:
+            hostTag?.layer?.backgroundColor = accentColor.cgColor
+            usernameTag?.layer?.backgroundColor = inactiveColor.cgColor
+            passwordTag?.layer?.backgroundColor = inactiveColor.cgColor
         }
     }
     
