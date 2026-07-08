@@ -17,6 +17,14 @@ fi
 swiftc "$REPO_ROOT/src/MenuStateStore.swift" "$REPO_ROOT/tests/MenuStateStoreTests.swift" -o /tmp/menu-state-tests
 /tmp/menu-state-tests
 
+swiftc "$REPO_ROOT/src/PasswordEntry.swift" \
+       "$REPO_ROOT/src/VaultCryptoService.swift" \
+       "$REPO_ROOT/src/VaultService.swift" \
+       "$REPO_ROOT/src/PBKDF2.swift" \
+       "$REPO_ROOT/tests/VaultServiceTests.swift" \
+       -framework CryptoKit -framework Foundation -o /tmp/vault-tests
+/tmp/vault-tests
+
 bash "$REPO_ROOT/tests/test_developer_settings.sh"
 bash "$REPO_ROOT/tests/test_package_signing_keychain.sh"
 
