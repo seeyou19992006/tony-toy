@@ -179,7 +179,18 @@ class VaultService {
         let content = jsonStrings.joined(separator: "\n") + (jsonStrings.isEmpty ? "" : "\n")
         let tmpURL = vaultJSONLURL.appendingPathExtension("tmp")
         try content.write(to: tmpURL, atomically: true, encoding: .utf8)
-        _ = try FileManager.default.replaceItemAt(vaultJSONLURL, withItemAt: tmpURL)
+        // replaceItemAt 对符号链接会失败，检测并解析真实路径
+        let targetURL: URL
+        if let realPath = try? FileManager.default.destinationOfSymbolicLink(atPath: vaultJSONLURL.path) {
+            targetURL = URL(fileURLWithPath: realPath)
+        } else {
+            targetURL = vaultJSONLURL
+        }
+        if FileManager.default.fileExists(atPath: targetURL.path) {
+            _ = try FileManager.default.replaceItemAt(targetURL, withItemAt: tmpURL)
+        } else {
+            try FileManager.default.moveItem(at: tmpURL, to: targetURL)
+        }
     }
 }
 
