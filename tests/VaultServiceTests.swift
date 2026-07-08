@@ -33,10 +33,10 @@ struct VaultServiceTests {
             let svc = VaultService(configDir: testDir)
             try svc.createVault(masterPassword: "secret123")
             assertTrue(svc.isUnlocked, "createVault 后应已解锁")
-            assertTrue(FileManager.default.fileExists(atPath: testDir.appendingPathComponent("vault.json").path),
-                       "vault.json 应存在")
             assertTrue(FileManager.default.fileExists(atPath: testDir.appendingPathComponent("vault.jsonl").path),
                        "vault.jsonl 应存在")
+            assertFalse(FileManager.default.fileExists(atPath: testDir.appendingPathComponent("vault.json").path),
+                        "不应再有 vault.json (meta 已去除)")
             assertEqual(svc.entries.count, 0, "新库应为空")
             print("testCreateVault passed")
         } catch {
@@ -179,6 +179,34 @@ struct VaultServiceTests {
             print("testFullValidationOnUnlock passed")
         } catch {
             fputs("testFullValidationOnUnlock failed: \(error)\n", stderr); exit(1)
+        }
+
+        // --- testNewMachineScenario ---
+        // 模拟新机器：A 机器创建并写入 jsonl，B 机器只有 jsonl（无 meta），直接 unlock 应成功
+        do {
+            // A 机器
+            let dirA = testDir.appendingPathComponent("machineA")
+            let svcA = VaultService(configDir: dirA)
+            try svcA.createVault(masterPassword: "secret123")
+            try svcA.addEntry(name: "GitHub", username: "loki", password: "p@ss", notes: "")
+            svcA.lock()
+
+            // B 机器：拷贝 jsonl 过来，无 meta
+            let dirB = testDir.appendingPathComponent("machineB")
+            try FileManager.default.createDirectory(at: dirB, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(
+                at: dirA.appendingPathComponent("vault.jsonl"),
+                to: dirB.appendingPathComponent("vault.jsonl"))
+
+            let svcB = VaultService(configDir: dirB)
+            assertTrue(svcB.vaultExists, "B 机器应有 vault.jsonl")
+            try svcB.unlock(masterPassword: "secret123")
+            assertTrue(svcB.isUnlocked, "B 机器应解锁成功")
+            assertEqual(svcB.entries.count, 1, "B 机器应载入 1 条")
+            assertEqual(svcB.entries[0].password, "p@ss", "B 机器解密密码应正确")
+            print("testNewMachineScenario passed")
+        } catch {
+            fputs("testNewMachineScenario failed: \(error)\n", stderr); exit(1)
         }
 
         print("VaultServiceTests all passed")

@@ -4,12 +4,18 @@ import Foundation
 class VaultService {
     private let crypto = VaultCryptoService()
     private let configDir: URL
-    private let vaultMetaURL: URL
     private let vaultJSONLURL: URL
     private var masterKeyData: Data?  // 存储派生的密钥数据
 
+    // 固定 salt + PBKDF2 参数，不同机器共享，安全性靠主密码强度 + 迭代次数
+    private static let salt = Data([
+        0x4a, 0x7c, 0x91, 0x23, 0xd6, 0x58, 0xb4, 0x1f,
+        0xe0, 0xa2, 0x37, 0x9c, 0x6b, 0x50, 0x8d, 0x3f
+    ])
+    private static let pbkdf2Rounds = 100000
+
     var isUnlocked: Bool { masterKeyData != nil }
-    var vaultExists: Bool { FileManager.default.fileExists(atPath: vaultMetaURL.path) }
+    var vaultExists: Bool { FileManager.default.fileExists(atPath: vaultJSONLURL.path) }
     var entries: [PasswordEntry] = []
 
     init() {
@@ -17,7 +23,6 @@ class VaultService {
             .appendingPathComponent(".config")
             .appendingPathComponent("tony-toy")
         try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-        vaultMetaURL = configDir.appendingPathComponent("vault.json")
         vaultJSONLURL = configDir.appendingPathComponent("vault.jsonl")
     }
 
@@ -25,24 +30,14 @@ class VaultService {
     init(configDir: URL) {
         self.configDir = configDir
         try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-        vaultMetaURL = configDir.appendingPathComponent("vault.json")
         vaultJSONLURL = configDir.appendingPathComponent("vault.jsonl")
     }
 
-    /// 首次创建 vault
+    /// 首次创建 vault（写空 JSONL）
     func createVault(masterPassword: String) throws {
-        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-        let meta = VaultMeta(version: 2, salt: salt, pbkdf2Rounds: 100000)
-
-        masterKeyData = pbkdf2(password: masterPassword, salt: salt,
-                               keyByteCount: 32, rounds: meta.pbkdf2Rounds)
+        masterKeyData = pbkdf2(password: masterPassword, salt: Self.salt,
+                               keyByteCount: 32, rounds: Self.pbkdf2Rounds)
         entries = []
-
-        // 写 meta
-        let metaData = try JSONEncoder().encode(meta)
-        try metaData.write(to: vaultMetaURL, options: .atomic)
-
-        // 写空 JSONL
         try Data().write(to: vaultJSONLURL, options: .atomic)
     }
 
@@ -52,51 +47,46 @@ class VaultService {
             throw VaultError.vaultNotFound
         }
 
-        let metaData = try Data(contentsOf: vaultMetaURL)
-        let meta = try JSONDecoder().decode(VaultMeta.self, from: metaData)
-
-        let keyData = pbkdf2(password: masterPassword, salt: meta.salt,
-                             keyByteCount: 32, rounds: meta.pbkdf2Rounds)
+        let keyData = pbkdf2(password: masterPassword, salt: Self.salt,
+                             keyByteCount: 32, rounds: Self.pbkdf2Rounds)
 
         // 逐行读 JSONL，全量验证
         var loaded: [PasswordEntry] = []
-        if FileManager.default.fileExists(atPath: vaultJSONLURL.path) {
-            let jsonlData = try Data(contentsOf: vaultJSONLURL)
-            guard let text = String(data: jsonlData, encoding: .utf8) else {
+        let jsonlData = try Data(contentsOf: vaultJSONLURL)
+        guard let text = String(data: jsonlData, encoding: .utf8) else {
+            throw VaultError.wrongPassword
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        for line in lines {
+            guard let lineData = line.data(using: .utf8) else {
                 throw VaultError.wrongPassword
             }
-            let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-            for line in lines {
-                guard let lineData = line.data(using: .utf8) else {
-                    throw VaultError.wrongPassword
-                }
-                let encEntry: EncryptedEntry
-                do {
-                    encEntry = try JSONDecoder().decode(EncryptedEntry.self, from: lineData)
-                } catch {
-                    throw VaultError.wrongPassword
-                }
-                let plainData: Data
-                do {
-                    plainData = try crypto.decrypt(encEntry.password,
-                                                   keyData: keyData,
-                                                   nonce: encEntry.nonce)
-                } catch {
-                    throw VaultError.wrongPassword
-                }
-                guard let plain = String(data: plainData, encoding: .utf8) else {
-                    throw VaultError.wrongPassword
-                }
-                loaded.append(PasswordEntry(
-                    id: encEntry.id,
-                    name: encEntry.name,
-                    username: encEntry.username,
-                    password: plain,
-                    notes: encEntry.notes,
-                    createdAt: encEntry.createdAt,
-                    updatedAt: encEntry.updatedAt
-                ))
+            let encEntry: EncryptedEntry
+            do {
+                encEntry = try JSONDecoder().decode(EncryptedEntry.self, from: lineData)
+            } catch {
+                throw VaultError.wrongPassword
             }
+            let plainData: Data
+            do {
+                plainData = try crypto.decrypt(encEntry.password,
+                                               keyData: keyData,
+                                               nonce: encEntry.nonce)
+            } catch {
+                throw VaultError.wrongPassword
+            }
+            guard let plain = String(data: plainData, encoding: .utf8) else {
+                throw VaultError.wrongPassword
+            }
+            loaded.append(PasswordEntry(
+                id: encEntry.id,
+                name: encEntry.name,
+                username: encEntry.username,
+                password: plain,
+                notes: encEntry.notes,
+                createdAt: encEntry.createdAt,
+                updatedAt: encEntry.updatedAt
+            ))
         }
 
         masterKeyData = keyData

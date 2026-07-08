@@ -10,13 +10,6 @@ struct PasswordEntry: Identifiable, Codable {
     var updatedAt: Date
 }
 
-// vault.json 的元信息格式
-struct VaultMeta: Codable {
-    var version: Int
-    var salt: Data
-    var pbkdf2Rounds: Int
-}
-
 // vault.jsonl 每行的存储格式：只有 password 是密文
 struct EncryptedEntry: Codable {
     let id: UUID
