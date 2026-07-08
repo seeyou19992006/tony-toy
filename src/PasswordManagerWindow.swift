@@ -234,19 +234,19 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                         return nil
                     }
                 }
-            case 124: // 右箭头 - 切换到下一个字段
+            case 124: // 右箭头 - 切换到下一个字段（按 UI 列顺序：host→username→password）
                 switch self.activeField {
-                case .username: self.activeField = .host
-                case .host: self.activeField = .password
-                case .password: self.activeField = .username
+                case .host: self.activeField = .username
+                case .username: self.activeField = .password
+                case .password: self.activeField = .host
                 }
                 self.refreshSelectedCell()
                 return nil
-            case 123: // 左箭头 - 切换到上一个字段
+            case 123: // 左箭头 - 切换到上一个字段（password→username→host）
                 switch self.activeField {
-                case .username: self.activeField = .password
-                case .password: self.activeField = .host
-                case .host: self.activeField = .username
+                case .host: self.activeField = .password
+                case .password: self.activeField = .username
+                case .username: self.activeField = .host
                 }
                 self.refreshSelectedCell()
                 return nil
