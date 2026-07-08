@@ -634,10 +634,26 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     }
     
     @objc private func pasteSelected() {
-        guard let table = tableView, table.selectedRow >= 0 else { return }
+        guard let table = tableView else { return }
+        let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+        guard row >= 0 else { return }
         let filtered = vaultService.search(searchField?.stringValue ?? "")
-        guard table.selectedRow < filtered.count else { return }
-        pasteEntryValue(filtered[table.selectedRow])
+        guard row < filtered.count else { return }
+
+        // 根据双击的列更新 activeField，使粘贴的字段与点击的列一致
+        let col = table.clickedColumn
+        if col >= 0 {
+            let colId = table.tableColumns[col].identifier.rawValue
+            switch colId {
+            case "hostCol": activeField = .host
+            case "userCol": activeField = .username
+            case "pwdCol": activeField = .password
+            default: break
+            }
+            refreshSelectedCell()
+        }
+
+        pasteEntryValue(filtered[row])
     }
     
     // MARK: - 编辑条目
@@ -994,6 +1010,8 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
         case "nameCol":
             label.stringValue = entry.name
             label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+            // 清理旧 trackingArea（cell 复用）
+            cell.trackingAreas.forEach { cell.removeTrackingArea($0) }
             if !entry.notes.isEmpty {
                 let trackingArea = NSTrackingArea(
                     rect: .zero,
@@ -1038,27 +1056,11 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             break
         }
         
-        // 高亮当前选中字段对应的列
+        // 高亮交给 refreshRowHighlight 控制，viewFor 只负责内容
+        cell.wantsLayer = true
+        cell.layer?.backgroundColor = NSColor.clear.cgColor
         if isSelected {
-            let active = activeField
-            let highlight: Bool
-            switch (colId, active) {
-            case ("nameCol", _): highlight = false
-            case ("hostCol", .host): highlight = true
-            case ("userCol", .username): highlight = true
-            case ("pwdCol", .password): highlight = true
-            default: highlight = false
-            }
-            cell.wantsLayer = true
-            if highlight {
-                cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
-            } else {
-                // 选中行的其他列给浅底色，表示行被选中
-                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
-            }
-        } else {
-            cell.wantsLayer = true
-            cell.layer?.backgroundColor = NSColor.clear.cgColor
+            applyRowHighlight(table: tableView, row: row)
         }
         
         return cell
@@ -1071,17 +1073,20 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
     /// 选中行变化时刷新高亮
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = tableView else { return }
-        // 强制刷新旧行和新行，确保 cell 背景色正确更新
-        var rowsToReload = IndexSet()
+        // 直接清除旧行 + 高亮新行，不依赖 reloadData
         if let userInfo = notification.userInfo,
            let oldRows = userInfo["NSOldSelectedRows"] as? IndexSet {
-            rowsToReload.formUnion(oldRows)
+            for row in oldRows where row >= 0 && row < table.numberOfRows {
+                for col in 0..<table.numberOfColumns {
+                    guard let cell = table.view(atColumn: col, row: row, makeIfNecessary: false) else { continue }
+                    cell.wantsLayer = true
+                    cell.layer?.backgroundColor = NSColor.clear.cgColor
+                }
+            }
         }
         if table.selectedRow >= 0 {
-            rowsToReload.insert(table.selectedRow)
+            applyRowHighlight(table: table, row: table.selectedRow)
         }
-        let allCols = IndexSet(integersIn: 0..<table.numberOfColumns)
-        table.reloadData(forRowIndexes: rowsToReload, columnIndexes: allCols)
         // 鼠标点击行后焦点会留在表格，拉回搜索框以保持键盘快捷键生效
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let sf = self.searchField else { return }
@@ -1094,8 +1099,39 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
     /// 刷新选中行的字段高亮
     private func refreshSelectedCell() {
         guard let table = tableView, table.selectedRow >= 0, table.selectedRow < table.numberOfRows else { return }
-        let allCols = IndexSet(integersIn: 0..<table.numberOfColumns)
-        table.reloadData(forRowIndexes: IndexSet(integer: table.selectedRow), columnIndexes: allCols)
+        applyRowHighlight(table: table, row: table.selectedRow)
+    }
+
+    /// 给指定行设置高亮：active 列强调色，其他列浅底色
+    private func applyRowHighlight(table: NSTableView, row: Int) {
+        // 先清除所有可见行的高亮
+        let visibleRows = table.rows(in: table.visibleRect)
+        for r in visibleRows.lowerBound..<visibleRows.upperBound {
+            for col in 0..<table.numberOfColumns {
+                guard let cell = table.view(atColumn: col, row: r, makeIfNecessary: false) else { continue }
+                cell.wantsLayer = true
+                cell.layer?.backgroundColor = NSColor.clear.cgColor
+            }
+        }
+        // 再给选中行上色
+        guard row >= 0, row < table.numberOfRows else { return }
+        for col in 0..<table.numberOfColumns {
+            guard let cell = table.view(atColumn: col, row: row, makeIfNecessary: false) else { continue }
+            let colId = cell.identifier?.rawValue ?? ""
+            cell.wantsLayer = true
+            let highlight: Bool
+            switch (colId, activeField) {
+            case ("hostCol", .host): highlight = true
+            case ("userCol", .username): highlight = true
+            case ("pwdCol", .password): highlight = true
+            default: highlight = false
+            }
+            if highlight {
+                cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            } else {
+                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
+            }
+        }
     }
     
     /// 构建表格右键菜单
