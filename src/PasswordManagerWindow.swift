@@ -79,7 +79,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     }
     
     init() {
-        let contentRect = NSRect(x: 0, y: 0, width: 450, height: 550)
+        let contentRect = NSRect(x: 0, y: 0, width: 675, height: 550)
         super.init(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .resizable],
@@ -88,7 +88,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         )
 
         self.title = "TonyPwd - 密码管理器"
-        self.minSize = NSSize(width: 350, height: 400)
+        self.minSize = NSSize(width: 525, height: 400)
         self.delegate = self
         self.isReleasedWhenClosed = false
         self.level = .floating  // 保持在最前
@@ -117,7 +117,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     }
     
     private func setupUI() {
-        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 450, height: 550))
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 675, height: 550))
         contentView = containerView
         containerView.autoresizingMask = [.width, .height]
         
@@ -268,10 +268,32 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         scroll.autoresizingMask = [.width, .height]
         
         let table = NSTableView()
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PasswordColumn"))
-        table.addTableColumn(column)
-        table.headerView = nil
-        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        
+        let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("nameCol"))
+        nameCol.title = "服务名"
+        nameCol.width = 120
+        nameCol.resizingMask = .userResizingMask
+        table.addTableColumn(nameCol)
+        
+        let hostCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("hostCol"))
+        hostCol.title = "IP / 域名"
+        hostCol.width = 140
+        hostCol.resizingMask = .userResizingMask
+        table.addTableColumn(hostCol)
+        
+        let userCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("userCol"))
+        userCol.title = "用户名"
+        userCol.width = 120
+        userCol.resizingMask = .userResizingMask
+        table.addTableColumn(userCol)
+        
+        let pwdCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("pwdCol"))
+        pwdCol.title = "密码"
+        pwdCol.width = 180
+        pwdCol.resizingMask = .userResizingMask
+        table.addTableColumn(pwdCol)
+        
+        table.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         table.delegate = self
         table.dataSource = self
         table.target = self
@@ -482,7 +504,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         // 避免重复打开
         guard currentAddPanel == nil && currentEditPanel == nil else { return }
         
-        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 270),
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 320),
                            styleMask: [.titled, .closable],
                            backing: .buffered,
                            defer: false)
@@ -514,6 +536,16 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         let passwordRow = makePasswordRow()
         container.addArrangedSubview(passwordRow.view)
+        
+        let notesField = NSTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 60))
+        notesField.placeholderString = "备注"
+        notesField.font = NSFont.systemFont(ofSize: 13)
+        notesField.identifier = NSUserInterfaceItemIdentifier("notesField")
+        notesField.isEditable = true
+        notesField.isSelectable = true
+        notesField.lineBreakMode = .byWordWrapping
+        notesField.usesSingleLineMode = false
+        container.addArrangedSubview(notesField)
         
         let buttonRow = NSStackView()
         buttonRow.orientation = .horizontal
@@ -559,6 +591,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
         let hostField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "hostField" }) as? NSTextField
         let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
+        let notesField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "notesField" }) as? NSTextField
         // 密码：安全框或明文框（眼睛切换时只有一个可见）
         let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
         let passwordPlainField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordPlainField" }) as? NSTextField
@@ -578,7 +611,8 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                 name: name,
                 host: hostField?.stringValue ?? "",
                 username: usernameField?.stringValue ?? "",
-                password: password
+                password: password,
+                notes: notesField?.stringValue ?? ""
             )
             self.endSheet(panel)
             reloadData()
@@ -610,7 +644,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         editingEntryId = entry.id
         
-        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 270),
+        let panel = PasteablePanel(contentRect: NSRect(x: 0, y: 0, width: 350, height: 320),
                            styleMask: [.titled, .closable],
                            backing: .buffered,
                            defer: false)
@@ -645,6 +679,17 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         let passwordRow = makePasswordRow(value: entry.password)
         container.addArrangedSubview(passwordRow.view)
+        
+        let notesField = NSTextField(frame: NSRect(x: 0, y: 0, width: 310, height: 60))
+        notesField.placeholderString = "备注"
+        notesField.font = NSFont.systemFont(ofSize: 13)
+        notesField.stringValue = entry.notes
+        notesField.identifier = NSUserInterfaceItemIdentifier("notesField")
+        notesField.isEditable = true
+        notesField.isSelectable = true
+        notesField.lineBreakMode = .byWordWrapping
+        notesField.usesSingleLineMode = false
+        container.addArrangedSubview(notesField)
         
         let buttonRow = NSStackView()
         buttonRow.orientation = .horizontal
@@ -691,6 +736,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         let nameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "nameField" }) as? NSTextField
         let hostField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "hostField" }) as? NSTextField
         let usernameField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "usernameField" }) as? NSTextField
+        let notesField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "notesField" }) as? NSTextField
         // 密码：安全框或明文框（眼睛切换时只有一个可见）
         let passwordSecureField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordField" }) as? PasteableSecureTextField
         let passwordPlainField = container.arrangedSubviews.first(where: { $0.identifier?.rawValue == "passwordRow" })?.subviews.first(where: { $0.identifier?.rawValue == "passwordPlainField" }) as? NSTextField
@@ -712,6 +758,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         entry.host = hostField?.stringValue ?? ""
         entry.username = usernameField?.stringValue ?? ""
         entry.password = password
+        entry.notes = notesField?.stringValue ?? ""
         entry.updatedAt = Date()
         
         do {
@@ -842,160 +889,110 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
         guard row < filtered.count else { return nil }
         
         let entry = filtered[row]
+        let colId = tableColumn?.identifier.rawValue ?? ""
         let isSelected = tableView.selectedRow == row
         
         let cell = NSTableCellView()
-        cell.identifier = NSUserInterfaceItemIdentifier("Cell")
+        cell.identifier = NSUserInterfaceItemIdentifier(colId)
         
-        // --- 使用 Auto Layout 实现自适应宽度 ---
+        let label = NSTextField(labelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.textColor = NSColor.labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
         
-        // 服务名
-        let nameLabel = NSTextField(labelWithString: entry.name)
-        nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(nameLabel)
-        
-        // host tag
-        let hostTag = NSView()
-        hostTag.identifier = NSUserInterfaceItemIdentifier("hostTag")
-        hostTag.wantsLayer = true
-        hostTag.layer?.cornerRadius = 6
-        hostTag.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(hostTag)
-        
-        let hostLabel = NSTextField(labelWithString: entry.host.isEmpty ? "-" : entry.host)
-        hostLabel.font = NSFont.systemFont(ofSize: 12)
-        hostLabel.textColor = NSColor.labelColor
-        hostLabel.lineBreakMode = .byTruncatingTail
-        hostLabel.identifier = NSUserInterfaceItemIdentifier("hostLabel")
-        hostLabel.translatesAutoresizingMaskIntoConstraints = false
-        hostTag.addSubview(hostLabel)
-        
-        // 用户名 tag
-        let usernameTag = NSView()
-        usernameTag.identifier = NSUserInterfaceItemIdentifier("usernameTag")
-        usernameTag.wantsLayer = true
-        usernameTag.layer?.cornerRadius = 6
-        usernameTag.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(usernameTag)
-        
-        let usernameLabel = NSTextField(labelWithString: entry.username.isEmpty ? "-" : entry.username)
-        usernameLabel.font = NSFont.systemFont(ofSize: 12)
-        usernameLabel.textColor = NSColor.labelColor
-        usernameLabel.lineBreakMode = .byTruncatingTail
-        usernameLabel.identifier = NSUserInterfaceItemIdentifier("usernameLabel")
-        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
-        usernameTag.addSubview(usernameLabel)
-        
-        // 密码 tag
-        let passwordTag = NSView()
-        passwordTag.identifier = NSUserInterfaceItemIdentifier("passwordTag")
-        passwordTag.wantsLayer = true
-        passwordTag.layer?.cornerRadius = 6
-        passwordTag.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(passwordTag)
-        
-        // 密码圆点
-        let maskedPassword = String(repeating: "•", count: entry.password.count)
-        let passwordLabel = NSTextField(labelWithString: maskedPassword)
-        passwordLabel.font = NSFont.systemFont(ofSize: 12)
-        passwordLabel.textColor = NSColor.labelColor
-        passwordLabel.lineBreakMode = .byTruncatingTail
-        passwordLabel.identifier = NSUserInterfaceItemIdentifier("passwordLabel")
-        passwordLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        passwordLabel.translatesAutoresizingMaskIntoConstraints = false
-        passwordTag.addSubview(passwordLabel)
-        
-        // 眼睛按钮
-        let eyeBtn = NSButton()
-        eyeBtn.identifier = NSUserInterfaceItemIdentifier("eyeBtn")
-        eyeBtn.bezelStyle = .inline
-        eyeBtn.isBordered = false
-        eyeBtn.imagePosition = .imageOnly
-        eyeBtn.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示密码")
-        eyeBtn.alternateImage = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "隐藏密码")
-        eyeBtn.imageScaling = .scaleProportionallyDown
-        eyeBtn.setButtonType(.toggle)
-        eyeBtn.tag = row
-        eyeBtn.target = self
-        eyeBtn.action = #selector(togglePasswordVisibility(_:))
-        eyeBtn.translatesAutoresizingMaskIntoConstraints = false
-        passwordTag.addSubview(eyeBtn)
-        
-        // --- 约束 ---
         NSLayoutConstraint.activate([
-            // 服务名：左侧固定宽度区域
-            nameLabel.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-            nameLabel.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            nameLabel.widthAnchor.constraint(equalToConstant: 80),
-            
-            // hostTag：name 右侧
-            hostTag.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
-            hostTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            hostTag.heightAnchor.constraint(equalToConstant: 30),
-            
-            // usernameTag：host 右侧弹性区域
-            usernameTag.leadingAnchor.constraint(equalTo: hostTag.trailingAnchor, constant: 10),
-            usernameTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            usernameTag.heightAnchor.constraint(equalToConstant: 30),
-            
-            // passwordTag：右侧固定（含眼睛），靠右对齐
-            passwordTag.leadingAnchor.constraint(equalTo: usernameTag.trailingAnchor, constant: 10),
-            passwordTag.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
-            passwordTag.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            passwordTag.heightAnchor.constraint(equalToConstant: 30),
-            
-            // host 内部
-            hostLabel.leadingAnchor.constraint(equalTo: hostTag.leadingAnchor, constant: 8),
-            hostLabel.trailingAnchor.constraint(equalTo: hostTag.trailingAnchor, constant: -8),
-            hostLabel.centerYAnchor.constraint(equalTo: hostTag.centerYAnchor),
-            
-            // username 内部
-            usernameLabel.leadingAnchor.constraint(equalTo: usernameTag.leadingAnchor, constant: 8),
-            usernameLabel.trailingAnchor.constraint(equalTo: usernameTag.trailingAnchor, constant: -8),
-            usernameLabel.centerYAnchor.constraint(equalTo: usernameTag.centerYAnchor),
-            
-            // password 内部：label 在左，眼睛在右
-            passwordLabel.leadingAnchor.constraint(equalTo: passwordTag.leadingAnchor, constant: 8),
-            passwordLabel.trailingAnchor.constraint(equalTo: eyeBtn.leadingAnchor, constant: -4),
-            passwordLabel.centerYAnchor.constraint(equalTo: passwordTag.centerYAnchor),
-            
-            eyeBtn.trailingAnchor.constraint(equalTo: passwordTag.trailingAnchor, constant: -4),
-            eyeBtn.centerYAnchor.constraint(equalTo: passwordTag.centerYAnchor),
-            eyeBtn.widthAnchor.constraint(equalToConstant: 22),
-            eyeBtn.heightAnchor.constraint(equalToConstant: 22),
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         
-        // 高亮当前选中字段
+        switch colId {
+        case "nameCol":
+            label.stringValue = entry.name
+            label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+            if !entry.notes.isEmpty {
+                cell.toolTip = entry.notes
+            }
+        case "hostCol":
+            label.stringValue = entry.host.isEmpty ? "-" : entry.host
+        case "userCol":
+            label.stringValue = entry.username.isEmpty ? "-" : entry.username
+        case "pwdCol":
+            let maskedPassword = String(repeating: "•", count: entry.password.count)
+            label.stringValue = maskedPassword
+            label.identifier = NSUserInterfaceItemIdentifier("passwordLabel")
+            // 眼睛按钮
+            let eyeBtn = NSButton()
+            eyeBtn.identifier = NSUserInterfaceItemIdentifier("eyeBtn")
+            eyeBtn.bezelStyle = .inline
+            eyeBtn.isBordered = false
+            eyeBtn.imagePosition = .imageOnly
+            eyeBtn.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示密码")
+            eyeBtn.alternateImage = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: "隐藏密码")
+            eyeBtn.imageScaling = .scaleProportionallyDown
+            eyeBtn.setButtonType(.toggle)
+            eyeBtn.tag = row
+            eyeBtn.target = self
+            eyeBtn.action = #selector(togglePasswordVisibility(_:))
+            eyeBtn.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(eyeBtn)
+            // 调整约束：label 在左，眼睛在右
+            label.trailingAnchor.constraint(equalTo: eyeBtn.leadingAnchor, constant: -4).isActive = true
+            NSLayoutConstraint.activate([
+                eyeBtn.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                eyeBtn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                eyeBtn.widthAnchor.constraint(equalToConstant: 22),
+                eyeBtn.heightAnchor.constraint(equalToConstant: 22),
+            ])
+        default:
+            break
+        }
+        
+        // 高亮当前选中字段对应的列
         if isSelected {
-            applyFieldHighlight(hostTag: hostTag, usernameTag: usernameTag, passwordTag: passwordTag)
+            let active = activeField
+            let highlight: Bool
+            switch (colId, active) {
+            case ("nameCol", _): highlight = false
+            case ("hostCol", .host): highlight = true
+            case ("userCol", .username): highlight = true
+            case ("pwdCol", .password): highlight = true
+            default: highlight = false
+            }
+            cell.wantsLayer = true
+            if highlight {
+                cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            } else if colId != "nameCol" {
+                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1).cgColor
+            } else {
+                cell.layer?.backgroundColor = NSColor.clear.cgColor
+            }
         } else {
-            hostTag.layer?.backgroundColor = NSColor.clear.cgColor
-            usernameTag.layer?.backgroundColor = NSColor.clear.cgColor
-            passwordTag.layer?.backgroundColor = NSColor.clear.cgColor
+            cell.wantsLayer = true
+            cell.layer?.backgroundColor = NSColor.clear.cgColor
         }
         
         return cell
     }
     
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        return 48
+        return 36
     }
     
     /// 选中行变化时刷新高亮
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = tableView else { return }
-        // 清除旧行高亮，设置新行高亮
+        // 刷新旧行和新行
         if let userInfo = notification.userInfo,
            let oldRows = userInfo["NSOldSelectedRows"] as? IndexSet {
             for row in oldRows where row >= 0 && row < table.numberOfRows {
-                if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) {
-                    cell.subviews.first { $0.identifier?.rawValue == "hostTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
-                    cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
-                    cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }?.layer?.backgroundColor = NSColor.clear.cgColor
+                for col in 0..<table.numberOfColumns {
+                    if let cell = table.view(atColumn: col, row: row, makeIfNecessary: false) {
+                        cell.wantsLayer = true
+                        cell.layer?.backgroundColor = NSColor.clear.cgColor
+                    }
                 }
             }
         }
@@ -1005,32 +1002,25 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
     /// 刷新选中行的字段高亮
     private func refreshSelectedCell() {
         guard let table = tableView, table.selectedRow >= 0, table.selectedRow < table.numberOfRows else { return }
-        if let cell = table.view(atColumn: 0, row: table.selectedRow, makeIfNecessary: false) {
-            let hostTag = cell.subviews.first { $0.identifier?.rawValue == "hostTag" }
-            let usernameTag = cell.subviews.first { $0.identifier?.rawValue == "usernameTag" }
-            let passwordTag = cell.subviews.first { $0.identifier?.rawValue == "passwordTag" }
-            applyFieldHighlight(hostTag: hostTag, usernameTag: usernameTag, passwordTag: passwordTag)
-        }
-    }
-    
-    /// 根据当前 activeField 高亮对应的 tag
-    private func applyFieldHighlight(hostTag: NSView?, usernameTag: NSView?, passwordTag: NSView?) {
-        let accentColor = NSColor.controlAccentColor.withAlphaComponent(0.2)
-        let inactiveColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1)
-        
-        switch activeField {
-        case .username:
-            hostTag?.layer?.backgroundColor = inactiveColor.cgColor
-            usernameTag?.layer?.backgroundColor = accentColor.cgColor
-            passwordTag?.layer?.backgroundColor = inactiveColor.cgColor
-        case .password:
-            hostTag?.layer?.backgroundColor = inactiveColor.cgColor
-            usernameTag?.layer?.backgroundColor = inactiveColor.cgColor
-            passwordTag?.layer?.backgroundColor = accentColor.cgColor
-        case .host:
-            hostTag?.layer?.backgroundColor = accentColor.cgColor
-            usernameTag?.layer?.backgroundColor = inactiveColor.cgColor
-            passwordTag?.layer?.backgroundColor = inactiveColor.cgColor
+        for col in 0..<table.numberOfColumns {
+            guard let cell = table.view(atColumn: col, row: table.selectedRow, makeIfNecessary: false) else { continue }
+            let colId = cell.identifier?.rawValue ?? ""
+            cell.wantsLayer = true
+            let active = activeField
+            let highlight: Bool
+            switch (colId, active) {
+            case ("hostCol", .host): highlight = true
+            case ("userCol", .username): highlight = true
+            case ("pwdCol", .password): highlight = true
+            default: highlight = false
+            }
+            if highlight {
+                cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            } else if colId != "nameCol" {
+                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1).cgColor
+            } else {
+                cell.layer?.backgroundColor = NSColor.clear.cgColor
+            }
         }
     }
     
