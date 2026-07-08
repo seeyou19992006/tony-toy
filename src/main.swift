@@ -236,6 +236,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// tooltip 延迟 300ms（必须在 NSApplication.shared 之前注册）
+UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

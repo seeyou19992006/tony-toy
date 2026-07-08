@@ -61,11 +61,6 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     private var mainView: NSStackView?
     private var unlockView: NSStackView?
     private var masterPasswordInput: PasteableSecureTextField?
-
-    // 自定义 tooltip
-    private var tooltipLabel: NSTextField?
-    private var tooltipTimer: Timer?
-    private var tooltipRow: Int = -1
     
     /// 记录唤起面板前的前台应用，用于粘贴后恢复焦点
     private var previousApp: NSRunningApplication?
@@ -838,80 +833,6 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         }
     }
 
-    // MARK: - 自定义 tooltip
-
-    override func mouseEntered(with event: NSEvent) {
-        guard let row = event.trackingArea?.userInfo?["row"] as? Int else { return }
-        tooltipRow = row
-        tooltipTimer?.invalidate()
-        tooltipTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-            self?.showTooltip()
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        tooltipTimer?.invalidate()
-        tooltipTimer = nil
-        hideTooltip()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        // 在同一行内移动不重置 timer
-    }
-
-    private func showTooltip() {
-        hideTooltip()
-        guard tooltipRow >= 0 else { return }
-        let filtered = vaultService.search(searchField?.stringValue ?? "")
-        guard tooltipRow < filtered.count else { return }
-        let notes = filtered[tooltipRow].notes
-        guard !notes.isEmpty else { return }
-
-        let label = NSTextField(labelWithString: notes)
-        label.font = NSFont.systemFont(ofSize: 12)
-        label.textColor = NSColor.labelColor
-        label.backgroundColor = NSColor.controlBackgroundColor
-        label.lineBreakMode = .byWordWrapping
-        label.isBezeled = true
-        label.isEditable = false
-        label.isSelectable = true
-        label.preferredMaxLayoutWidth = 300
-        label.sizeToFit()
-
-        let tooltipView = NSView(frame: NSRect(x: 0, y: 0, width: min(label.fittingSize.width + 16, 320),
-                                               height: min(label.fittingSize.height + 10, 120)))
-        label.frame = NSRect(x: 8, y: 5, width: tooltipView.bounds.width - 16, height: tooltipView.bounds.height - 10)
-        tooltipView.addSubview(label)
-        tooltipView.wantsLayer = true
-        tooltipView.layer?.cornerRadius = 6
-        tooltipView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        tooltipView.layer?.borderWidth = 1
-        tooltipView.layer?.borderColor = NSColor.separatorColor.cgColor
-
-        // 定位在 name 列右下方
-        let mouseLoc = NSEvent.mouseLocation
-        let winFrame = self.frame
-        var point = NSPoint(x: mouseLoc.x - winFrame.origin.x + 10,
-                            y: winFrame.height - (mouseLoc.y - winFrame.origin.y) - tooltipView.bounds.height - 10)
-        // 边界检查
-        if point.x + tooltipView.bounds.width > winFrame.width - 10 {
-            point.x = winFrame.width - tooltipView.bounds.width - 10
-        }
-        if point.y < 10 { point.y = mouseLoc.y - winFrame.origin.y + 10 }
-
-        tooltipView.frame.origin = point
-        self.contentView?.addSubview(tooltipView)
-        tooltipLabel = label
-    }
-
-    private func hideTooltip() {
-        if let tv = tooltipLabel?.superview {
-            tv.removeFromSuperview()
-        }
-        tooltipLabel = nil
-        tooltipRow = -1
-    }
-
     /// 根据 activeField 粘贴选中条目的用户名或密码
     private func pasteEntryValue(_ entry: PasswordEntry) {
         let value: String
@@ -1010,16 +931,8 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
         case "nameCol":
             label.stringValue = entry.name
             label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-            // 清理旧 trackingArea（cell 复用）
-            cell.trackingAreas.forEach { cell.removeTrackingArea($0) }
             if !entry.notes.isEmpty {
-                let trackingArea = NSTrackingArea(
-                    rect: .zero,
-                    options: [.mouseMoved, .activeAlways, .inVisibleRect, .mouseEnteredAndExited],
-                    owner: self,
-                    userInfo: ["row": row]
-                )
-                cell.addTrackingArea(trackingArea)
+                cell.toolTip = entry.notes
             }
         case "hostCol":
             label.stringValue = entry.host.isEmpty ? "-" : entry.host
@@ -1119,17 +1032,13 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             guard let cell = table.view(atColumn: col, row: row, makeIfNecessary: false) else { continue }
             let colId = cell.identifier?.rawValue ?? ""
             cell.wantsLayer = true
-            let highlight: Bool
             switch (colId, activeField) {
-            case ("hostCol", .host): highlight = true
-            case ("userCol", .username): highlight = true
-            case ("pwdCol", .password): highlight = true
-            default: highlight = false
-            }
-            if highlight {
+            case ("hostCol", .host), ("userCol", .username), ("pwdCol", .password):
                 cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
-            } else {
-                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
+            case ("nameCol", _):
+                cell.layer?.backgroundColor = NSColor.clear.cgColor
+            default:
+                cell.layer?.backgroundColor = NSColor.clear.cgColor
             }
         }
     }
