@@ -165,7 +165,7 @@ struct VaultServiceTests {
             // 把密文的第一个字符改掉
             if let range = text.range(of: "\"password\":\"") {
                 let nextIdx = text.index(range.upperBound, offsetBy: 1)
-                text.replaceSubrange(range.upperBound..<nextIdx, with: "X")
+                text.replaceSubrange(range.upperBound..<nextIdx, with: "!")
             }
             try text.write(to: url, atomically: true, encoding: .utf8)
 
