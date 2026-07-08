@@ -997,6 +997,13 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             }
         }
         refreshSelectedCell()
+        // 鼠标点击行后焦点会留在表格，拉回搜索框以保持键盘快捷键生效
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let sf = self.searchField else { return }
+            if sf.currentEditor == nil {
+                self.makeFirstResponder(sf)
+            }
+        }
     }
     
     /// 刷新选中行的字段高亮
