@@ -299,6 +299,8 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         table.target = self
         table.doubleAction = #selector(pasteSelected)
         table.usesAlternatingRowBackgroundColors = true
+        // 禁用系统整行选中高亮，改用 cell 背景色控制字段高亮
+        table.selectionHighlightStyle = .none
         table.menu = buildTableMenu()
         
         scroll.documentView = table
@@ -964,10 +966,9 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             cell.wantsLayer = true
             if highlight {
                 cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
-            } else if colId != "nameCol" {
-                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1).cgColor
             } else {
-                cell.layer?.backgroundColor = NSColor.clear.cgColor
+                // 选中行的其他列给浅底色，表示行被选中
+                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
             }
         } else {
             cell.wantsLayer = true
@@ -1023,10 +1024,8 @@ extension PasswordManagerWindow: NSTableViewDelegate, NSTableViewDataSource {
             }
             if highlight {
                 cell.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
-            } else if colId != "nameCol" {
-                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.1).cgColor
             } else {
-                cell.layer?.backgroundColor = NSColor.clear.cgColor
+                cell.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.3).cgColor
             }
         }
     }
