@@ -7,11 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "🔨 正在创建符合 macOS 策略的标准代码签名证书..."
 mkdir -p local-sign
 
-# 创建符合苹果标准的完整配置文件
-cat > local-sign/openssl.cnf <<EOF
+# 如果已有 p12 就直接复用，不重新生成（避免证书指纹变化导致旧签名失效）
+if [ ! -f local-sign/TonyToyLocalSign.p12 ]; then
+    echo "🔨 正在创建符合 macOS 策略的标准代码签名证书..."
+
+    cat > local-sign/openssl.cnf <<EOF
 [ req ]
 default_bits        = 2048
 distinguished_name  = req_distinguished_name
@@ -28,21 +30,24 @@ extendedKeyUsage    = critical, codeSigning
 subjectKeyIdentifier = hash
 EOF
 
-# 生成证书 (使用显式配置文件)
-openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-    -config local-sign/openssl.cnf \
-    -extensions v3_codesign \
-    -keyout local-sign/key.pem \
-    -out local-sign/cert.pem
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -config local-sign/openssl.cnf \
+        -extensions v3_codesign \
+        -keyout local-sign/key.pem \
+        -out local-sign/cert.pem
 
-# 解决 OpenSSL 3.x 与 macOS security 工具的兼容性问题
-if openssl pkcs12 -help 2>&1 | grep -q "\-legacy"; then
-    openssl pkcs12 -export -inkey local-sign/key.pem -in local-sign/cert.pem -out local-sign/TonyToyLocalSign.p12 -passout pass:123456 -name "TonyToy Local Sign" -legacy
+    # 解决 OpenSSL 3.x 与 macOS security 工具的兼容性问题
+    if openssl pkcs12 -help 2>&1 | grep -q "\-legacy"; then
+        openssl pkcs12 -export -inkey local-sign/key.pem -in local-sign/cert.pem -out local-sign/TonyToyLocalSign.p12 -passout pass:123456 -name "TonyToy Local Sign" -legacy
+    else
+        openssl pkcs12 -export -inkey local-sign/key.pem -in local-sign/cert.pem -out local-sign/TonyToyLocalSign.p12 -passout pass:123456 -name "TonyToy Local Sign"
+    fi
+
+    rm local-sign/openssl.cnf
+    echo "✅ 证书已生成"
 else
-    openssl pkcs12 -export -inkey local-sign/key.pem -in local-sign/cert.pem -out local-sign/TonyToyLocalSign.p12 -passout pass:123456 -name "TonyToy Local Sign"
+    echo "📦 已有 TonyToyLocalSign.p12，直接复用"
 fi
-
-rm local-sign/openssl.cnf
 
 # 自动探测 login 钥匙串路径
 KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
