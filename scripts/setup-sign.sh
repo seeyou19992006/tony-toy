@@ -54,11 +54,13 @@ read -rs PASSWORD
 echo ""
 
 echo "🔐 正在清理旧证书并重新导入到: $KEYCHAIN_PATH ..."
-# 深度清理：先删除所有同名身份
-security delete-identity -c "TonyToy Local Sign" "$KEYCHAIN_PATH" 2>/dev/null || true
-security delete-certificate -c "TonyToy Local Sign" "$KEYCHAIN_PATH" 2>/dev/null || true
-# 同时清理系统钥匙串里的旧证书 (防止干扰)
-sudo security delete-certificate -c "TonyToy Local Sign" /Library/Keychains/System.keychain 2>/dev/null || true
+# 循环删除所有同名身份，直到全部清干净
+while security delete-identity -c "TonyToy Local Sign" "$KEYCHAIN_PATH" 2>/dev/null; do
+    :
+done
+while sudo security delete-certificate -c "TonyToy Local Sign" /Library/Keychains/System.keychain 2>/dev/null; do
+    :
+done
 
 # 1. 解锁
 security unlock-keychain -p "$PASSWORD" "$KEYCHAIN_PATH"
