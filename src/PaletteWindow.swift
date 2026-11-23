@@ -440,7 +440,10 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private func changePage(by delta: Int) {
         guard !results.isEmpty else { return }
         let totalPages = max(1, (results.count + pageSize - 1) / pageSize)
-        let target = max(0, min(totalPages - 1, currentPage + delta))
+        // 翻页首尾循环：第一页再往前到最后一页，最后一页再往后回第一页
+        var target = currentPage + delta
+        if target < 0 { target = totalPages - 1 }
+        if target >= totalPages { target = 0 }
         guard target != currentPage else { return }
         currentPage = target
         selectedIndex = min(target * pageSize, results.count - 1)
