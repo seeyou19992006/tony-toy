@@ -224,61 +224,54 @@ final class SwitcherWindow: NSPanel {
         items.indices.contains(selected) ? items[selected] : nil
     }
 
-    /// 横向移动：行末跳到下一行末尾，行首跳到上一行末尾
+    /// 某个格子的一维下标；该列在该行不存在时回退到该行最后一个
+    private func index(row: Int, column: Int) -> Int? {
+        let start = row * cols
+        guard start < items.count else { return nil }
+        let end = min(start + cols, items.count) - 1
+        return min(start + column, end)
+    }
+
+    /// 横向移动：按阅读顺序，行末接下一行行首
     func moveHorizontal(by delta: Int) {
         guard !items.isEmpty else { return }
         let row = selected / cols
-        let column = selected % cols
+        let rowStart = row * cols
+        let rowEnd = min(rowStart + cols, items.count) - 1
 
         if delta > 0 {
-            let nextInRow = selected + 1
-            // 本行还有下一个格子
-            if column + 1 < cols, nextInRow < items.count {
-                selected = nextInRow
+            if selected < rowEnd {
+                selected += 1
             } else {
-                // 行末：跳到下一行末尾；没有下一行就回到开头
-                let nextRowStart = (row + 1) * cols
-                if nextRowStart < items.count {
-                    selected = min(nextRowStart + cols - 1, items.count - 1)
-                } else {
-                    selected = 0
-                }
+                let nextStart = rowEnd + 1
+                selected = nextStart < items.count ? nextStart : 0
             }
         } else {
-            if column > 0 {
+            if selected > rowStart {
                 selected -= 1
-            } else if row > 0 {
-                // 行首：跳到上一行末尾
-                selected = min((row - 1) * cols + cols - 1, items.count - 1)
+            } else if rowStart > 0 {
+                let prevStart = (row - 1) * cols
+                selected = min(prevStart + cols, items.count) - 1
             } else {
-                // 第一行行首：回到最后一项
                 selected = items.count - 1
             }
         }
         applySelection()
     }
 
-    /// 纵向移动：整行跨越，越界则跳到首行/末行的同一列
+    /// 纵向移动：同列跨行；该列在目标行不存在时落到目标行末尾
     func moveVertical(by delta: Int) {
         guard !items.isEmpty else { return }
+        let row = selected / cols
         let column = selected % cols
+        let totalRows = (items.count + cols - 1) / cols
 
-        if delta < 0 {
-            let candidate = selected - cols
-            if candidate >= 0 {
-                selected = candidate
-            } else {
-                guard column < items.count else { return }
-                let lastRow = (items.count - 1 - column) / cols
-                selected = lastRow * cols + column
-            }
-        } else {
-            let candidate = selected + cols
-            if candidate < items.count {
-                selected = candidate
-            } else {
-                selected = column < items.count ? column : 0
-            }
+        var targetRow = row + (delta > 0 ? 1 : -1)
+        if targetRow < 0 { targetRow = totalRows - 1 }
+        if targetRow >= totalRows { targetRow = 0 }
+
+        if let target = index(row: targetRow, column: column) {
+            selected = target
         }
         applySelection()
     }
