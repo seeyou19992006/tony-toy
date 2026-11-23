@@ -7,7 +7,9 @@ import CoreGraphics
 final class Activator {
     func activate(_ entry: AppEntry) {
         guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: entry.bundleID).first else {
+            // 进程都不存在：先启动，启动后同样可能没有窗口（Finder 被退出后就是如此）
             openApplication(entry)
+            scheduleWindowFallback(for: entry.bundleID, delay: 0.9)
             return
         }
 
@@ -23,12 +25,23 @@ final class Activator {
         openApplication(entry)
 
         // 有些应用（Finder、部分系统应用）激活后不会自己开窗，补一个 ⌘N。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self, !self.hasVisibleWindows(pid: running.processIdentifier) else { return }
-            self.sendNewWindowShortcut(pid: running.processIdentifier)
+        scheduleWindowFallback(for: entry.bundleID, delay: 0.5, knownPID: running.processIdentifier)
+    }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.focusFrontWindow(of: running.processIdentifier)
+    /// 延迟检查是否出现窗口，没有就发 ⌘N 并聚焦。
+    /// 进程刚启动时 pid 未知，所以按 bundleID 重新查询。
+    private func scheduleWindowFallback(for bundleID: String, delay: TimeInterval,
+                                        knownPID: pid_t? = nil) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            let pid = knownPID ?? NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID).first?.processIdentifier
+            guard let pid, !self.hasVisibleWindows(pid: pid) else { return }
+
+            self.sendNewWindowShortcut(pid: pid)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.focusFrontWindow(of: pid)
             }
         }
     }
