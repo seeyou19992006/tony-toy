@@ -100,6 +100,18 @@ echo "✅ 构建成功:"
 echo "   - App: $APP_DIR"
 echo "   - Architectures: $ARCHS"
 
+# 自动签名：保持签名身份稳定，避免辅助功能权限在每次重新编译后失效
+if [ -n "${SIGN_IDENTITY:-}" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+    SIGN_KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
+    if codesign --force --deep --sign "$SIGN_IDENTITY" --keychain "$SIGN_KEYCHAIN_PATH" --timestamp=none "$APP_DIR" >/dev/null 2>&1; then
+        echo "   🔏 已使用 \"$SIGN_IDENTITY\" 签名"
+    else
+        echo "   ⚠️ 签名失败，当前为 ad-hoc，辅助功能权限可能需要重新授权"
+    fi
+else
+    echo "   ⚠️ 未找到签名证书 \"${SIGN_IDENTITY:-TonyToy Local Sign}\"，先执行 just setup-sign"
+fi
+
 # 创建二进制文件的便捷软链接到 dist 目录
 BINARY_SYMLINK="$DIST_DIR/$BINARY_NAME"
 rm -f "$BINARY_SYMLINK"

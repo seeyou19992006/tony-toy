@@ -138,8 +138,12 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
         refresh()
 
-        // 热键唤起的窗口必须强制激活，否则 key window 收不到键盘事件
-        NSApp.activate(ignoringOtherApps: true)
+        // macOS 14+ 用新的 activate()，旧 API ignoringOtherApps 在新系统上已不保证生效
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         makeKeyAndOrderFront(nil)
         installEscMonitor()
 
