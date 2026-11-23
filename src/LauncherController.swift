@@ -53,7 +53,8 @@ final class LauncherController {
 
     func beginSwitcher() {
         if palette == nil { start() }
-        palette?.show()
+        // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
+        palette?.show(selecting: 1)
     }
 
     func moveSwitcherSelection(by delta: Int) {

@@ -118,8 +118,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     // MARK: - 显示与关闭
 
-    func show() {
-        dbg("show() 被调用")
+    func show(selecting initialRow: Int = 0) {
+        dbg("show() 被调用 initialRow=\(initialRow)")
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // 调试用：--query 预填搜索词
@@ -130,6 +130,16 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             searchField.stringValue = ""
         }
         refresh()
+
+        // ⌘Tab 唤起时默认落在第二个：第一个通常是当前应用
+        if initialRow > 0, results.count > 1 {
+            selectedIndex = min(initialRow, results.count - 1)
+            currentPage = selectedIndex / pageSize
+            layoutWindow()
+            tableView.reloadData()
+            tableView.selectRowIndexes(IndexSet(integer: selectedIndex % pageSize),
+                                       byExtendingSelection: false)
+        }
 
         // 与密码管理器一致：强制激活，否则 borderless 面板收不到键盘
         NSApp.activate(ignoringOtherApps: true)
