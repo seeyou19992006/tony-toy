@@ -66,6 +66,29 @@ final class SwitcherController {
 
     private init() {}
 
+    /// 当前真实的前台窗口标识。
+    /// 用户可能通过点击等方式切换焦点，MRU 必须以此为准，否则默认选中会和实际窗口不一致。
+    private static func frontmostWindowIdentity() -> String? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.activationPolicy == .regular,
+              let bundleID = app.bundleIdentifier else { return nil }
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.25)
+
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let raw = value else { return nil }
+
+        var titleValue: CFTypeRef?
+        AXUIElementCopyAttributeValue(raw as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
+        let rawTitle = (titleValue as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let appName = app.localizedName ?? ""
+        let title = SwitcherItem.sanitize(title: rawTitle.isEmpty ? "未命名窗口" : rawTitle,
+                                          appName: appName)
+        return "\(bundleID)|\(title)"
+    }
+
     private static func remember(_ item: SwitcherItem) {
         let key = item.identity
         mruOrder.removeAll { $0 == key }
@@ -258,6 +281,16 @@ final class SwitcherController {
                 }
             }
         }
+
+        // 以真实前台窗口为 MRU 首位，保证「上一个窗口」准确
+        if let front = frontmostWindowIdentity() {
+            mruOrder.removeAll { $0 == front }
+            mruOrder.insert(front, at: 0)
+        }
+
+        // 清掉已经不存在的窗口，避免占用名次
+        let existing = Set(items.map(\.identity))
+        mruOrder = mruOrder.filter { existing.contains($0) }
 
         return sortByMRU(items)
     }
