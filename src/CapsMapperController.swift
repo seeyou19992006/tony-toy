@@ -69,6 +69,10 @@ final class CapsMapperController {
         }
         if isLayerActive {
             if let mapping = mappings[keyCode] {
+                // 启动器面板打开时，Esc 必须交给启动器关闭，不能被映射成 caps_lock
+                if keyCode == 53, LauncherController.shared.isPanelVisible {
+                    return Unmanaged.passUnretained(event)
+                }
                 if type == .keyDown { actionExecutor.dispatch(mapping.action) }
                 return nil
             }

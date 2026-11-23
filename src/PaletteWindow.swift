@@ -184,13 +184,48 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         tableView.frame = NSRect(x: 0, y: 0, width: panelWidth - 20, height: listHeight)
     }
 
-    /// 多显示器下优先跟随鼠标所在屏幕
+    /// 多显示器下优先弹在前台窗口所在屏幕，其次鼠标所在屏幕
     private func targetScreen() -> NSScreen? {
+        if let front = previousApp,
+           let frame = frontWindowFrame(pid: front.processIdentifier) {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            if let screen = NSScreen.screens.first(where: { screenContains(cgPoint: center, screen: $0) }) {
+                return screen
+            }
+        }
+
         let mouse = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
             return screen
         }
         return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// 前台应用的第一个可见窗口，CG 坐标（左上原点）
+    private func frontWindowFrame(pid: pid_t) -> CGRect? {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                              kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary else { continue }
+            let x = (bounds["X"] as? NSNumber)?.doubleValue ?? 0
+            let y = (bounds["Y"] as? NSNumber)?.doubleValue ?? 0
+            let width = (bounds["Width"] as? NSNumber)?.doubleValue ?? 0
+            let height = (bounds["Height"] as? NSNumber)?.doubleValue ?? 0
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+        return nil
+    }
+
+    /// 把 NSScreen 的左下原点坐标换算成 CG 的左上原点再判断包含
+    private func screenContains(cgPoint: CGPoint, screen: NSScreen) -> Bool {
+        guard let primary = NSScreen.screens.first else { return false }
+        let frame = CGRect(x: screen.frame.origin.x,
+                           y: primary.frame.height - screen.frame.maxY,
+                           width: screen.frame.width,
+                           height: screen.frame.height)
+        return frame.contains(cgPoint)
     }
 
     private func dismiss(restoreFocus: Bool) {

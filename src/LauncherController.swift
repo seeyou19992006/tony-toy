@@ -29,6 +29,11 @@ final class LauncherController {
         }
     }
 
+    /// 面板当前是否可见，供 Caps 层判断是否放行 Esc
+    var isPanelVisible: Bool {
+        palette?.isVisible ?? false
+    }
+
     func show() {
         dbg("launcher show called")
         if palette == nil {

@@ -20,6 +20,13 @@ final class Activator {
                 running.activate(options: [.activateIgnoringOtherApps])
                 openApplication(entry)
             }
+            // Finder 之类不响应 reopen，延迟后仍无窗口就主动开一个
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                guard let self, !self.hasVisibleWindows(pid: running.processIdentifier) else { return }
+                if entry.bundleID == "com.apple.finder" {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
+                }
+            }
         }
     }
 
