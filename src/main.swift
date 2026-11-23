@@ -110,6 +110,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if isCmdTabEnabled {
             cmdTabSwitcher.start()
         }
+
+        // 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
+        Prewarmer.start()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
