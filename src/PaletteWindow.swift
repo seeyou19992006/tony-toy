@@ -400,6 +400,32 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
     }
 
+    private func atStartOfInput() -> Bool {
+        guard let editor = searchField.currentEditor() else { return true }
+        let range = editor.selectedRange
+        return range.length == 0 && range.location == 0
+    }
+
+    private func atEndOfInput() -> Bool {
+        guard let editor = searchField.currentEditor() else { return true }
+        let range = editor.selectedRange
+        let length = (searchField.stringValue as NSString).length
+        return range.length == 0 && range.location >= length
+    }
+
+    /// 整页切换，选中落到新页第一条
+    private func changePage(by delta: Int) {
+        guard !results.isEmpty else { return }
+        let totalPages = max(1, (results.count + pageSize - 1) / pageSize)
+        let target = max(0, min(totalPages - 1, currentPage + delta))
+        guard target != currentPage else { return }
+        currentPage = target
+        selectedIndex = min(target * pageSize, results.count - 1)
+        layoutWindow()
+        tableView.reloadData()
+        tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    }
+
     private func moveSelection(by delta: Int) {
         guard !results.isEmpty else { return }
         // 首尾环绕
