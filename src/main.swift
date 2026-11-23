@@ -167,6 +167,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(launcherItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
+        restartItem.target = self
+        menu.addItem(restartItem)
+
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem?.menu = menu
@@ -193,6 +198,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
     }
     
+    @objc private func restartApp() {
+        // 单实例锁要求旧进程先退出，所以延迟一点再拉起新实例
+        let path = Bundle.main.bundleURL.path
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 0.6; /usr/bin/open -n '\''\(path)'\''"]
+        try? process.run()
+        NSApp.terminate(nil)
+    }
+
     @objc private func toggleCmdTab() {
         isCmdTabEnabled.toggle()
         if isCmdTabEnabled {
