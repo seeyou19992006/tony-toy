@@ -76,6 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isVolumeEnabled = true
     private var isHotkeyEnabled = true
     private var isCmdTabEnabled = true
+    private var isMouseFollowEnabled = false
     private var isCapsEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -85,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isCapsEnabled = persistedState.isCapsEnabled
         isHotkeyEnabled = persistedState.isHotkeyEnabled
         isCmdTabEnabled = persistedState.isCmdTabEnabled
+        isMouseFollowEnabled = persistedState.isMouseFollowEnabled
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
@@ -158,6 +160,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let cmdTabItem = NSMenuItem(title: "⌘Tab 接管", action: #selector(toggleCmdTab), keyEquivalent: "")
         cmdTabItem.state = isCmdTabEnabled ? .on : .off
         menu.addItem(cmdTabItem)
+
+        let mouseFollowItem = NSMenuItem(title: "切换时鼠标移到窗口中心",
+                                         action: #selector(toggleMouseFollow), keyEquivalent: "")
+        mouseFollowItem.state = isMouseFollowEnabled ? .on : .off
+        menu.addItem(mouseFollowItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -211,6 +218,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.arguments = ["-c", "sleep 0.6; /usr/bin/open -n '\''\(path)'\''"]
         try? process.run()
         NSApp.terminate(nil)
+    }
+
+    @objc private func toggleMouseFollow() {
+        isMouseFollowEnabled.toggle()
+        persistMenuState()
+        buildMenu()
     }
 
     @objc private func toggleCmdTab() {
@@ -308,7 +321,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 isVolumeEnabled: isVolumeEnabled,
                 isCapsEnabled: isCapsEnabled,
                 isHotkeyEnabled: isHotkeyEnabled,
-                isCmdTabEnabled: isCmdTabEnabled
+                isCmdTabEnabled: isCmdTabEnabled,
+                isMouseFollowEnabled: isMouseFollowEnabled
             )
         )
     }

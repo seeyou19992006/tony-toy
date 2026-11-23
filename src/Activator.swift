@@ -17,6 +17,7 @@ final class Activator {
             // 有窗口：在调用方隐藏面板之前激活，否则系统拒绝跨应用激活
             running.activate(options: [])
             raiseFrontWindow(of: running.processIdentifier)
+            moveMouseToWindowCenter(of: running.processIdentifier, delay: 0.12)
             return
         }
 
@@ -42,6 +43,35 @@ final class Activator {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 self?.focusFrontWindow(of: pid)
+                self?.moveMouseToWindowCenter(of: pid, delay: 0.1)
+            }
+        }
+    }
+
+    /// 把鼠标移到该应用最前面窗口的正中心
+    private func moveMouseToWindowCenter(of pid: pid_t, delay: TimeInterval) {
+        guard MenuStateStore.isMouseFollowEnabled else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                  kCGNullWindowID) as? [[String: Any]] ?? []
+
+            for info in list {
+                guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                      (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                      let bounds = info[kCGWindowBounds as String] as? NSDictionary else { continue }
+
+                let x = (bounds["X"] as? NSNumber)?.doubleValue ?? 0
+                let y = (bounds["Y"] as? NSNumber)?.doubleValue ?? 0
+                let width = (bounds["Width"] as? NSNumber)?.doubleValue ?? 0
+                let height = (bounds["Height"] as? NSNumber)?.doubleValue ?? 0
+                guard width > 1, height > 1 else { continue }
+
+                // CGWindowList 与 CGWarpMouseCursorPosition 都用左上原点，无需转换
+                CGWarpMouseCursorPosition(CGPoint(x: x + width / 2, y: y + height / 2))
+                // 挪完立刻重新关联，避免后续鼠标移动出现跳变
+                CGAssociateMouseAndMouseCursorPosition(1)
+                return
             }
         }
     }

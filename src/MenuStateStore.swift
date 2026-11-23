@@ -5,12 +5,14 @@ struct MenuToggleState {
     let isCapsEnabled: Bool
     let isHotkeyEnabled: Bool
     let isCmdTabEnabled: Bool
+    let isMouseFollowEnabled: Bool
 
     static let `default` = MenuToggleState(
         isVolumeEnabled: true,
         isCapsEnabled: true,
         isHotkeyEnabled: true,
-        isCmdTabEnabled: false
+        isCmdTabEnabled: false,
+        isMouseFollowEnabled: false
     )
 }
 
@@ -20,6 +22,7 @@ final class MenuStateStore {
         static let isCapsEnabled = "menu.isCapsEnabled"
         static let isHotkeyEnabled = "menu.isHotkeyEnabled"
         static let isCmdTabEnabled = "menu.isCmdTabEnabled"
+        static let isMouseFollowEnabled = "menu.isMouseFollowEnabled"
     }
 
     private let defaults: UserDefaults
@@ -40,7 +43,8 @@ final class MenuStateStore {
             isVolumeEnabled: defaults.object(forKey: Key.isVolumeEnabled) as? Bool ?? true,
             isCapsEnabled: defaults.object(forKey: Key.isCapsEnabled) as? Bool ?? true,
             isHotkeyEnabled: defaults.object(forKey: Key.isHotkeyEnabled) as? Bool ?? true,
-            isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? false
+            isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? false,
+            isMouseFollowEnabled: defaults.object(forKey: Key.isMouseFollowEnabled) as? Bool ?? false
         )
     }
 
@@ -49,5 +53,11 @@ final class MenuStateStore {
         defaults.set(state.isCapsEnabled, forKey: Key.isCapsEnabled)
         defaults.set(state.isHotkeyEnabled, forKey: Key.isHotkeyEnabled)
         defaults.set(state.isCmdTabEnabled, forKey: Key.isCmdTabEnabled)
+        defaults.set(state.isMouseFollowEnabled, forKey: Key.isMouseFollowEnabled)
+    }
+
+    /// 供 Activator 直接读取，避免层层传参
+    static var isMouseFollowEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "menu.isMouseFollowEnabled")
     }
 }
