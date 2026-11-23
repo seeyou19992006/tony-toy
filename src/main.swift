@@ -5,6 +5,16 @@ import Carbon
 // 全局变量用于 Carbon 回调
 weak var _PasswordManagerSharedSelf: AppDelegate?
 
+// 调试用：按 bundle id 激活应用（走完整 Activator 逻辑）
+if let flag = CommandLine.arguments.firstIndex(of: "--open"),
+   flag + 1 < CommandLine.arguments.count,
+   let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: CommandLine.arguments[flag + 1]) {
+    let bundleID = CommandLine.arguments[flag + 1]
+    Activator().activate(AppEntry(name: bundleID, bundleID: bundleID, url: url))
+    RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+    exit(0)
+}
+
 // 强效单实例检测：利用内核级文件锁 (flock)
 // 即使用户强杀进程 (kill -9)，内核也会自动释放锁。
 func acquireGlobalLock() -> Bool {

@@ -398,8 +398,12 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         guard !results.isEmpty else { return }
         let current = tableView.selectedRow
         let base = current < 0 ? 0 : current
-        let next = max(0, min(results.count - 1, base + delta))
+        // 首尾环绕：第一条再往上跳到最后一条，最后一条往下回到第一条
+        var next = base + delta
+        if next < 0 { next = results.count - 1 }
+        if next >= results.count { next = 0 }
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        tableView.scrollRowToVisible(next)
     }
 
     private func executeRow(_ index: Int) {

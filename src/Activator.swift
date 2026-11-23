@@ -15,18 +15,28 @@ final class Activator {
             running.activate(options: [.activateIgnoringOtherApps])
             raiseFrontWindow(of: running.processIdentifier)
         } else {
-            // 后台运行但窗口已关：走 reopen，等价于点 Dock 图标
+            // 后台运行但窗口已关：先走 reopen，等价于点 Dock 图标
             if !sendReopenEvent(bundleID: running.bundleIdentifier) {
                 running.activate(options: [.activateIgnoringOtherApps])
                 openApplication(entry)
             }
-            // Finder 之类不响应 reopen，延迟后仍无窗口就主动开一个
+            // 通用兜底：有些应用（Finder、部分系统应用）不响应 reopen，激活后补一个 ⌘N
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                 guard let self, !self.hasVisibleWindows(pid: running.processIdentifier) else { return }
-                if entry.bundleID == "com.apple.finder" {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
-                }
+                running.activate(options: [.activateIgnoringOtherApps])
+                self.sendNewWindowShortcut(pid: running.processIdentifier)
             }
+        }
+    }
+
+    /// 给目标应用发 ⌘N，让有文档模型的应用自己开一个窗口
+    private func sendNewWindowShortcut(pid: pid_t) {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        let keyCode: CGKeyCode = 45  // N
+        for keyDown in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown)
+            event?.flags = .maskCommand
+            event?.postToPid(pid)
         }
     }
 
