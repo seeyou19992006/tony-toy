@@ -89,24 +89,30 @@ final class CmdTabSwitcher {
             return Unmanaged.passUnretained(event)
         }
 
-        if keyCode == 53 {
-            dbg("cmdtab sees esc: active=\(isActive)")
-        }
-
-        // 按住 ⌘ 时 Esc 取消、回车直接执行
+        // 按住 ⌘ 期间的导航按键：全部吞掉，避免落到系统产生提示音
         if type == .keyDown, isActive {
-            if keyCode == escKeyCode {
+            switch keyCode {
+            case escKeyCode:
                 isActive = false
-                DispatchQueue.main.async {
-                    LauncherController.shared.cancelSwitcher()
-                }
+                DispatchQueue.main.async { SwitcherController.shared.cancel() }
                 return nil
-            }
-            if keyCode == returnKeyCode {
+            case returnKeyCode:
                 isActive = false
-                DispatchQueue.main.async {
-                    LauncherController.shared.commitSwitcher()
-                }
+                DispatchQueue.main.async { SwitcherController.shared.commit() }
+                return nil
+            case leftKeyCode:
+                DispatchQueue.main.async { SwitcherController.shared.moveHorizontal(by: -1) }
+                return nil
+            case rightKeyCode:
+                DispatchQueue.main.async { SwitcherController.shared.moveHorizontal(by: 1) }
+                return nil
+            case upKeyCode:
+                DispatchQueue.main.async { SwitcherController.shared.moveVertical(by: -1) }
+                return nil
+            case downKeyCode:
+                DispatchQueue.main.async { SwitcherController.shared.moveVertical(by: 1) }
+                return nil
+            default:
                 return nil
             }
         }

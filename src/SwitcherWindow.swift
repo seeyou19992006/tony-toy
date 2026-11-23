@@ -5,12 +5,13 @@ final class SwitcherTile: NSView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let highlight = NSView()
+    private let badge = NSView()
 
     var isSelected = false {
         didSet { updateHighlight() }
     }
 
-    init(entry: AppEntry, icon: NSImage) {
+    init(entry: AppEntry, icon: NSImage, hasWindow: Bool) {
         super.init(frame: .zero)
 
         highlight.wantsLayer = true
@@ -28,6 +29,16 @@ final class SwitcherTile: NSView {
         nameLabel.alignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
+
+        // 角标：绿点=有窗口，灰点=后台运行
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 5
+        badge.layer?.borderWidth = 2
+        badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
+        badge.layer?.backgroundColor = (hasWindow
+            ? NSColor.systemGreen
+            : NSColor(white: 0.62, alpha: 1)).cgColor
+        addSubview(badge)
     }
 
     required init?(coder: NSCoder) {
@@ -42,6 +53,8 @@ final class SwitcherTile: NSView {
                                 y: bounds.height - iconSide - 20,
                                 width: iconSide, height: iconSide)
         nameLabel.frame = NSRect(x: 4, y: 6, width: bounds.width - 8, height: 16)
+        badge.frame = NSRect(x: iconView.frame.maxX - 12, y: iconView.frame.maxY - 12,
+                             width: 10, height: 10)
     }
 
     private func updateHighlight() {
@@ -123,10 +136,12 @@ final class SwitcherWindow: NSPanel {
 
     private func rebuildTiles() {
         tiles.forEach { $0.removeFromSuperview() }
+        let windowedIDs = Set(WindowedApps.current().map(\.bundleID))
         tiles = items.map { entry in
             let icon = NSWorkspace.shared.icon(forFile: entry.url.path)
             icon.size = NSSize(width: 56, height: 56)
-            return SwitcherTile(entry: entry, icon: icon)
+            return SwitcherTile(entry: entry, icon: icon,
+                               hasWindow: windowedIDs.contains(entry.bundleID))
         }
         tiles.forEach { background.addSubview($0) }
         applySelection()
