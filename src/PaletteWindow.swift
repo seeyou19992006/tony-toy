@@ -10,6 +10,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private let background = NSVisualEffectView()
+    private let container = NSView()
     private let tintView = NSView()
 
     private var results: [AppEntry] = []
@@ -56,13 +57,19 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     // MARK: - UI
 
     private func buildUI() {
+        // 毛玻璃材质由窗口服务端合成，不响应自身圆角；
+        // 用一层 layer-backed 容器做裁剪，否则圆角外会露出矩形底色
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.masksToBounds = true
+        contentView = container
+
         background.material = .hudWindow
         background.blendingMode = .behindWindow
         background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 12
-        background.layer?.masksToBounds = true
-        contentView = background
+        background.frame = container.bounds
+        background.autoresizingMask = [.width, .height]
+        container.addSubview(background)
 
         // 深色着色层：压暗毛玻璃，保证深色主题下的对比度
         tintView.wantsLayer = true

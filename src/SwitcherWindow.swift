@@ -72,6 +72,7 @@ final class SwitcherTile: NSView {
 /// 单个显示器上的切换器面板（纯渲染，状态由 SwitcherController 持有）
 final class SwitcherWindow: NSPanel {
     private let background = NSVisualEffectView()
+    private let container = NSView()
     private let tintView = NSView()
     private let headerLabel = NSTextField(labelWithString: "")
     private let separator = NSBox()
@@ -103,13 +104,19 @@ final class SwitcherWindow: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
 
+        // 毛玻璃材质由窗口服务端合成，不响应自身圆角；
+        // 用一层 layer-backed 容器做裁剪，否则圆角外会露出矩形底色
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 16
+        container.layer?.masksToBounds = true
+        contentView = container
+
         background.material = .hudWindow
         background.blendingMode = .behindWindow
         background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 16
-        background.layer?.masksToBounds = true
-        contentView = background
+        background.frame = container.bounds
+        background.autoresizingMask = [.width, .height]
+        container.addSubview(background)
 
         tintView.wantsLayer = true
         tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.88).cgColor
