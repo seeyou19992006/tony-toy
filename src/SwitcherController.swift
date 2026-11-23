@@ -284,7 +284,14 @@ final class SwitcherController {
         let existing = Set(items.map(\.identity))
         mruOrder = mruOrder.filter { existing.contains($0) }
 
-        return sortByMRU(items)
+        // 无窗口的应用始终排在末尾：窗口列表来自 AX，
+        // 而 CGWindowList 可能把只剩隐藏窗口的应用算作「有窗口」，导致它混在中间
+        let ordered = sortByMRU(items)
+        var result: [SwitcherItem] = []
+        result.reserveCapacity(ordered.count)
+        result.append(contentsOf: ordered.filter(\.hasWindow))
+        result.append(contentsOf: ordered.filter { !$0.hasWindow })
+        return result
     }
 
     /// 按最近使用排序，保证「上一个窗口」稳定落在第二位
