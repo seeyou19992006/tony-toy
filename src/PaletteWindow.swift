@@ -450,8 +450,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         let items = pageItems
         guard items.indices.contains(row) else { return }
         let entry = items[row]
-        dismiss(restoreFocus: false)
+        // 先执行（此时面板仍是 key，跨应用激活才被允许），再关闭
         onExecute(entry)
+        dismiss(restoreFocus: false)
     }
 
     @objc private func executeSelected() {
