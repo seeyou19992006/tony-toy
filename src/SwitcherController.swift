@@ -234,6 +234,35 @@ final class SwitcherController {
         }
     }
 
+    /// 完全退出选中的无窗口应用
+    func quitSelected() {
+        guard isVisible, let item = current, !item.hasWindow else { return }
+        guard let app = NSRunningApplication
+            .runningApplications(withBundleIdentifier: item.entry.bundleID).first else { return }
+
+        app.terminate()
+
+        // 等应用真正退出后重建列表，面板保持打开
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.reloadPreservingSelection()
+        }
+    }
+
+    private func reloadPreservingSelection() {
+        guard isShown else { return }
+        let newItems = Self.buildItems()
+        guard !newItems.isEmpty else {
+            hide()
+            return
+        }
+        items = newItems
+        (rows, cols) = Self.grid(for: items.count)
+        selected = min(selected, items.count - 1)
+        for window in windows {
+            window.present(items: items, rows: rows, cols: cols, selected: selected)
+        }
+    }
+
     func cancel() {
         guard isVisible else { return }
         hide()

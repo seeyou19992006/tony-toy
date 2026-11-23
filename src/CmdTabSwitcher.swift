@@ -19,6 +19,7 @@ final class CmdTabSwitcher {
     private let dKeyCode: Int64 = 2
     private let sKeyCode: Int64 = 1
     private let fKeyCode: Int64 = 3
+    private let kKeyCode: Int64 = 40
 
     func start() {
         stop()
@@ -116,6 +117,10 @@ final class CmdTabSwitcher {
                 return nil
             case downKeyCode, dKeyCode:
                 DispatchQueue.main.async { SwitcherController.shared.moveVertical(by: 1) }
+                return nil
+            case kKeyCode:
+                // 无窗口应用：按 K 完全退出
+                DispatchQueue.main.async { SwitcherController.shared.quitSelected() }
                 return nil
             default:
                 // 其它按键放行，交给 Caps 层映射（Caps+E/D/S/F → 方向键）
