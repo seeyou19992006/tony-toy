@@ -1,9 +1,17 @@
 import Foundation
 import Cocoa
 
-/// 只反转鼠标滚轮方向，触摸板保持系统自然滚动。
-/// 依靠 kCGScrollWheelEventIsContinuous 区分两者：触摸板为 1，鼠标滚轮为 0。
+/// 让鼠标滚轮与触摸板反向。
+///
+/// macOS 的「自然滚动」由窗口服务端在事件 tap 之后统一应用，且鼠标和触摸板共用一个
+/// 全局开关，所以无法只改鼠标事件的 delta 来反转（进程内能看到修改，应用看不到）。
+/// 业界通行做法是反过来的：
+///   1. 把全局 com.apple.swipescrolldirection 关掉 → 鼠标变成传统方向
+///   2. 在 tap 里反转触摸板（isContinuous = 1）的连续滚动 → 触摸板保持自然方向
 final class ScrollInverter {
+    private static let globalKey = "com.apple.swipescrolldirection" as CFString
+    private static let savedOriginalKey = "scrollInverter.originalNaturalScroll"
+
     private var eventTap: CFMachPort?
     private var retryCount = 0
     private var enabled = false
@@ -14,7 +22,9 @@ final class ScrollInverter {
     }
 
     private func start() {
-        stop()
+        disableTap()
+        applyTraditionalScrolling()
+
         let mask = (1 << CGEventType.scrollWheel.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -45,6 +55,11 @@ final class ScrollInverter {
     }
 
     private func stop() {
+        disableTap()
+        restoreNaturalScrolling()
+    }
+
+    private func disableTap() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             eventTap = nil
@@ -59,11 +74,10 @@ final class ScrollInverter {
             return Unmanaged.passUnretained(event)
         }
 
-        // 触摸板是连续滚动，保持系统方向不动
+        // 全局已改为传统方向，这里只反转触摸板（连续滚动），让它保持自然
         let isContinuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        guard !isContinuous else { return Unmanaged.passUnretained(event) }
+        guard isContinuous else { return Unmanaged.passUnretained(event) }
 
-        // 鼠标滚轮：三套增量都要取反，否则不同应用表现不一致
         event.setIntegerValueField(.scrollWheelEventDeltaAxis1,
                                    value: -event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
         event.setIntegerValueField(.scrollWheelEventDeltaAxis2,
@@ -78,5 +92,52 @@ final class ScrollInverter {
                                   value: -event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2))
 
         return Unmanaged.passUnretained(event)
+    }
+
+    // MARK: - 全局自然滚动
+
+    private func applyTraditionalScrolling() {
+        let defaults = UserDefaults.standard
+
+        // 首次开启时记录原值；崩溃后重启也能还原
+        if defaults.object(forKey: Self.savedOriginalKey) == nil {
+            let original = currentGlobalValue() ?? true
+            defaults.set(original, forKey: Self.savedOriginalKey)
+        }
+
+        guard currentGlobalValue() != false else { return }
+        setGlobalValue(false)
+    }
+
+    private func restoreNaturalScrolling() {
+        let defaults = UserDefaults.standard
+        guard let original = defaults.object(forKey: Self.savedOriginalKey) as? Bool else { return }
+        if currentGlobalValue() != original {
+            setGlobalValue(original)
+        }
+        defaults.removeObject(forKey: Self.savedOriginalKey)
+    }
+
+    private func currentGlobalValue() -> Bool? {
+        CFPreferencesCopyValue(Self.globalKey,
+                               kCFPreferencesAnyApplication,
+                               kCFPreferencesCurrentUser,
+                               kCFPreferencesAnyHost) as? Bool
+    }
+
+    private func setGlobalValue(_ value: Bool) {
+        CFPreferencesSetValue(Self.globalKey,
+                              value as CFBoolean,
+                              kCFPreferencesAnyApplication,
+                              kCFPreferencesCurrentUser,
+                              kCFPreferencesAnyHost)
+        CFPreferencesSynchronize(kCFPreferencesAnyApplication,
+                                 kCFPreferencesCurrentUser,
+                                 kCFPreferencesAnyHost)
+
+        // 通知系统该偏好已变化，避免要重新登录才生效
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDistributedCenter(),
+                                             CFNotificationName("com.apple.swipescrolldirection" as CFString),
+                                             nil, nil, true)
     }
 }
