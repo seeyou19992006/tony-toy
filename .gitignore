@@ -15,3 +15,7 @@ local-sign/
 
 # local test output
 /tmp/
+
+# 图标候选素材：体积大、只作对比参考，正式产物在 resources/AppIcon.svg
+Assets/icon-candidates/
+Assets/icon-cube-a.svg

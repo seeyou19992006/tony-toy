@@ -87,6 +87,59 @@ final class AppActionExecutor {
             performUIAction { [self] in
                 maximizeFrontmostWindow()
             }
+        case .ensureApplicationRunning(let bundleIdentifier):
+            guard phase != .keyUp else { return }
+            performUIAction { [self] in
+                ensureApplicationRunning(bundleIdentifier: bundleIdentifier)
+            }
+        }
+    }
+
+    // MARK: - 目标应用保活
+
+    /// 刚拉起后的抑制窗口：拉起那一刻用户往往还按着手柄键，按键沿会连续
+    /// 冒出来，短时间内重复拉起没有意义。
+    private var suppressLaunchUntil: [String: Date] = [:]
+    private static let launchSuppression: TimeInterval = 1.5
+
+    /// 只做一件事：目标应用不在运行就拉起来。
+    /// 在跑的时候完全不动手 —— Home 键由目标应用自己监听处理，
+    /// 这里再投一次通知就会变成双触发。
+    private func ensureApplicationRunning(bundleIdentifier: String) {
+        let now = Date()
+
+        if let until = suppressLaunchUntil[bundleIdentifier], now < until {
+            dbg("拉起 \(bundleIdentifier) 忽略：抑制窗口内")
+            return
+        }
+
+        let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first { !$0.isTerminated }
+
+        if running != nil {
+            dbg("\(bundleIdentifier) 已在运行，交给它自己处理")
+            return
+        }
+
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+        else {
+            dbg("拉起失败：找不到 \(bundleIdentifier)")
+            return
+        }
+
+        suppressLaunchUntil[bundleIdentifier] = now.addingTimeInterval(Self.launchSuppression)
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        // 目标应用刚起来是隐藏态，直接要求展开面板
+        configuration.arguments = ["--show-deck"]
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            if let error {
+                dbg("拉起 \(bundleIdentifier) 失败：\(error.localizedDescription)")
+            } else {
+                dbg("已拉起 \(bundleIdentifier)")
+            }
         }
     }
 

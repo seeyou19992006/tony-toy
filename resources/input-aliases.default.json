@@ -96,6 +96,7 @@
     "mission_control": { "kind": "mission_control" },
     "send_hotkey": { "kind": "send_hotkey" },
     "activate_application": { "kind": "activate_application" },
+    "launch_application": { "kind": "launch_application" },
     "move_window_to_adjacent_display": { "kind": "move_window_to_adjacent_display" },
     "maximize_window": { "kind": "maximize_window" }
   }

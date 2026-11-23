@@ -18,6 +18,15 @@ build:
 package:
     @{{scripts}}package.sh
 
+# 🎨 重新生成应用图标与菜单栏图标
+icon:
+    @python3 {{scripts}}make-icon.py
+    @python3 {{scripts}}make-status-icon.py
+
+# 📲 安装到 /Applications 并重启应用
+install:
+    @{{scripts}}install.sh
+
 # 🔐 解锁 Keychain (SSH 签名必备)
 unlock:
     @{{scripts}}unlock-keychain.sh

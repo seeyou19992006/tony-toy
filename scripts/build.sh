@@ -22,7 +22,7 @@ APP_RESOURCES_DIR="$APP_CONTENTS_DIR/Resources"
 OUTPUT_BINARY="$APP_MACOS_DIR/$BINARY_NAME"
 # Build for Apple Silicon (arm64) using target triple
 SWIFT_FLAGS=(-O -whole-module-optimization -target arm64-apple-macosx11.0)
-LINK_FLAGS=(-framework Cocoa -framework CoreAudio)
+LINK_FLAGS=(-framework Cocoa -framework CoreAudio -framework IOKit)
 SOURCE_FILES_ARRAY=()
 
 collect_source_files() {
@@ -101,7 +101,10 @@ echo "   - App: $APP_DIR"
 echo "   - Architectures: $ARCHS"
 
 # 自动签名：保持签名身份稳定，避免辅助功能权限在每次重新编译后失效
-if [ -n "${SIGN_IDENTITY:-}" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+# 注意：不能用 `security ... | grep -q`，grep -q 提前退出会让 security 收到 SIGPIPE，
+# 在 set -o pipefail 下整条管道返回 141，导致明明有证书也判定为"未找到"。
+SIGNING_IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+if [ -n "${SIGN_IDENTITY:-}" ] && grep -qF "$SIGN_IDENTITY" <<<"$SIGNING_IDENTITIES"; then
     SIGN_KEYCHAIN_PATH="$HOME/Library/Keychains/login.keychain-db"
     if codesign --force --deep --sign "$SIGN_IDENTITY" --keychain "$SIGN_KEYCHAIN_PATH" --timestamp=none "$APP_DIR" >/dev/null 2>&1; then
         echo "   🔏 已使用 \"$SIGN_IDENTITY\" 签名"

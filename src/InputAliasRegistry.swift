@@ -237,7 +237,10 @@ struct InputAliasRegistry {
         mouseActions: [
             "volume_scroll": "volume_scroll",
             "mission_control": "mission_control",
-            "send_hotkey": "send_hotkey"
+            "send_hotkey": "send_hotkey",
+            "activate_application": "activate_application",
+            "launch_application": "launch_application",
+            "toggle_application": "toggle_application"
         ]
     )
 }

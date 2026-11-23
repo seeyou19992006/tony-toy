@@ -36,6 +36,8 @@ TonyToy 是一款轻量级的 macOS 效率工具，通过底层事件拦截提�
 | `just build` | 编译 Apple Silicon (.app) |
 | `just package` | 签名并打包为 .dmg |
 | `just release` | **一键发布** (编译 + 打包) |
+| `just install` | 安装到 `/Applications` 并重启应用 |
+| `just icon` | 重新生成应用图标 (`--theme b` 可切配色) |
 | `just test` | 运行单元测试 |
 | `just clean` | 清理构建产物 |
 

@@ -6,6 +6,7 @@ struct MenuToggleState {
     let isHotkeyEnabled: Bool
     let isCmdTabEnabled: Bool
     let isMouseFollowEnabled: Bool
+    let isGamepadHomeEnabled: Bool
 
     static let `default` = MenuToggleState(
         isVolumeEnabled: true,
@@ -13,6 +14,7 @@ struct MenuToggleState {
         isHotkeyEnabled: true,
         isCmdTabEnabled: false,
         isMouseFollowEnabled: false,
+        isGamepadHomeEnabled: true,
     )
 }
 
@@ -23,6 +25,7 @@ final class MenuStateStore {
         static let isHotkeyEnabled = "menu.isHotkeyEnabled"
         static let isCmdTabEnabled = "menu.isCmdTabEnabled"
         static let isMouseFollowEnabled = "menu.isMouseFollowEnabled"
+        static let isGamepadHomeEnabled = "menu.isGamepadHomeEnabled"
     }
 
     private let defaults: UserDefaults
@@ -45,6 +48,7 @@ final class MenuStateStore {
             isHotkeyEnabled: defaults.object(forKey: Key.isHotkeyEnabled) as? Bool ?? true,
             isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? false,
             isMouseFollowEnabled: defaults.object(forKey: Key.isMouseFollowEnabled) as? Bool ?? false,
+            isGamepadHomeEnabled: defaults.object(forKey: Key.isGamepadHomeEnabled) as? Bool ?? true,
         )
     }
 
@@ -54,6 +58,7 @@ final class MenuStateStore {
         defaults.set(state.isHotkeyEnabled, forKey: Key.isHotkeyEnabled)
         defaults.set(state.isCmdTabEnabled, forKey: Key.isCmdTabEnabled)
         defaults.set(state.isMouseFollowEnabled, forKey: Key.isMouseFollowEnabled)
+        defaults.set(state.isGamepadHomeEnabled, forKey: Key.isGamepadHomeEnabled)
     }
 
     /// 供 Activator 直接读取，避免层层传参

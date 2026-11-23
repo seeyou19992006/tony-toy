@@ -61,6 +61,10 @@ enum AppAction: Equatable {
     case activateApplication(bundleIdentifier: String, alreadyActiveBehavior: ActivateApplicationAlreadyActiveBehavior)
     case moveWindowToAdjacentDisplay(direction: DisplayDirection)
     case maximizeWindow
+    /// 确保目标应用在运行：没跑就拉起来（并直接展开面板），已经在跑就什么都不做。
+    /// 目标应用自己还监听手柄 Home，所以「在跑」的时候这一下交给它处理，
+    /// 两边不抢同一颗键。
+    case ensureApplicationRunning(bundleIdentifier: String)
 }
 
 enum AppActionError: Error, CustomStringConvertible {
@@ -130,6 +134,11 @@ enum AppActionResolver {
             return .moveWindowToAdjacentDisplay(direction: resolvedDirection)
         case "maximize_window":
             return .maximizeWindow
+        case "launch_application", "toggle_application":
+            guard let bundleIdentifier = spec.bundleIdentifier else {
+                throw AppActionError.missingBundleIdentifier
+            }
+            return .ensureApplicationRunning(bundleIdentifier: bundleIdentifier)
         default:
             throw AppActionError.unknownAction(resolvedAction)
         }

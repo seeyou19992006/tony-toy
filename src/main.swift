@@ -63,6 +63,9 @@ if isAlreadyRunning() {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// MacDeck 的 bundle id。手柄 Home 键统一由 TonyToy 接管，用来切换它的大屏。
+    private static let macDeckBundleIdentifier = "com.sunxiaolong.macdeck"
+
     private var statusItem: NSStatusItem?
     private let mouseLayerController = MouseLayerController()
     private let hotkeyController = HotkeyMapperController()
@@ -71,6 +74,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let passwordManager = PasswordManagerWindow()
     private let launcherController = LauncherController.shared
     private let cmdTabSwitcher = CmdTabSwitcher()
+    /// 手柄 Home 是独立输入源，用自己的执行器，不掺进键鼠那几条链路
+    private let gamepadActionExecutor = AppActionExecutor()
+    private let homeKeyBridge = HomeKeyBridge.shared
     private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
 
     private var isVolumeEnabled = true
@@ -78,6 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isCmdTabEnabled = true
     private var isMouseFollowEnabled = false
     private var isCapsEnabled = true
+    private var isGamepadHomeEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dbg("=== launch pid=\(getpid()) ===")
@@ -87,6 +94,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isHotkeyEnabled = persistedState.isHotkeyEnabled
         isCmdTabEnabled = persistedState.isCmdTabEnabled
         isMouseFollowEnabled = persistedState.isMouseFollowEnabled
+        isGamepadHomeEnabled = persistedState.isGamepadHomeEnabled
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
@@ -95,7 +103,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
 
         mouseLayerController.onVolumeChanged = { [weak self] volume in
-            self?.updateStatusIcon(volume: volume)
+            // 图标固定为魔方，音量改为悬停提示
+            self?.statusItem?.button?.toolTip = "音量 \(Int((volume * 100).rounded()))%"
         }
 
         // 初始启动
@@ -116,10 +125,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()
 
+        // 手柄 Home 键：MacDeck 在跑就让它自己翻，没跑就拉起来并直接展开大屏
+        homeKeyBridge.onHomePressed = { [weak self] in
+            guard let self else { return }
+            self.gamepadActionExecutor.dispatch(
+                .ensureApplicationRunning(bundleIdentifier: Self.macDeckBundleIdentifier))
+        }
+        homeKeyBridge.setEnabled(isGamepadHomeEnabled)
+        homeKeyBridge.start()
+
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         // 确保退出时清理映射
+        homeKeyBridge.stop()
         capsController.setEnabled(false)
         hotkeyController.setEnabled(false)
         mouseLayerController.setEnabled(false)
@@ -132,7 +151,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        updateStatusIcon(volume: 0.5)
+        // 菜单栏用模板图：只保留 alpha，深浅色模式由系统自动反转
+        if let button = statusItem?.button {
+            let icon = NSImage(named: "StatusIcon")
+            icon?.isTemplate = true
+            icon?.size = NSSize(width: 18, height: 18)
+            button.image = icon
+        }
         buildMenu()
     }
 
@@ -177,6 +202,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                       action: #selector(showLauncher), keyEquivalent: "")
         menu.addItem(launcherItem)
 
+        let gamepadItem = NSMenuItem(title: "Switch Home 拉起 MacDeck（未运行时）",
+                                     action: #selector(toggleGamepadHome), keyEquivalent: "")
+        gamepadItem.state = isGamepadHomeEnabled ? .on : .off
+        menu.addItem(gamepadItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
@@ -207,6 +237,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleHotkeys() {
         isHotkeyEnabled.toggle()
         hotkeyController.setEnabled(isHotkeyEnabled)
+        persistMenuState()
+        buildMenu()
+    }
+
+    @objc private func toggleGamepadHome() {
+        isGamepadHomeEnabled.toggle()
+        homeKeyBridge.setEnabled(isGamepadHomeEnabled)
         persistMenuState()
         buildMenu()
     }
@@ -324,20 +361,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 isHotkeyEnabled: isHotkeyEnabled,
                 isCmdTabEnabled: isCmdTabEnabled,
                 isMouseFollowEnabled: isMouseFollowEnabled,
+                isGamepadHomeEnabled: isGamepadHomeEnabled,
             )
         )
-    }
-
-    private func updateStatusIcon(volume: Float32) {
-        guard let button = statusItem?.button else { return }
-        let symbolName: String
-        if volume <= 0.01 { symbolName = "speaker.slash.fill" }
-        else if volume < 0.33 { symbolName = "speaker.wave.1.fill" }
-        else if volume < 0.66 { symbolName = "speaker.wave.2.fill" }
-        else { symbolName = "speaker.wave.3.fill" }
-        
-        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Vol")?.withSymbolConfiguration(config)
     }
 }
 
