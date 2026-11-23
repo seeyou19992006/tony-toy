@@ -10,7 +10,7 @@ struct MenuToggleState {
         isVolumeEnabled: true,
         isCapsEnabled: true,
         isHotkeyEnabled: true,
-        isCmdTabEnabled: true
+        isCmdTabEnabled: false
     )
 }
 
@@ -40,7 +40,7 @@ final class MenuStateStore {
             isVolumeEnabled: defaults.object(forKey: Key.isVolumeEnabled) as? Bool ?? true,
             isCapsEnabled: defaults.object(forKey: Key.isCapsEnabled) as? Bool ?? true,
             isHotkeyEnabled: defaults.object(forKey: Key.isHotkeyEnabled) as? Bool ?? true,
-            isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? true
+            isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? false
         )
     }
 
