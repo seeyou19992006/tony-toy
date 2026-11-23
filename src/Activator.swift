@@ -11,25 +11,23 @@ final class Activator {
             return
         }
 
-        // 必须在调用方隐藏面板之前执行：本进程一旦不是活动应用，
-        // 系统会拒绝跨应用激活请求（实测先隐藏再激活无效）
-        running.activate(options: [])
-
         if hasVisibleWindows(pid: running.processIdentifier) {
+            // 有窗口：在调用方隐藏面板之前激活，否则系统拒绝跨应用激活
+            running.activate(options: [])
             raiseFrontWindow(of: running.processIdentifier)
             return
         }
 
-        // 后台运行但窗口已关：先走 reopen，等价于点 Dock 图标
-        _ = sendReopenEvent(bundleID: running.bundleIdentifier)
+        // 无窗口：走 LaunchServices 激活。它不依赖本进程是否为活动应用，
+        // 而 NSRunningApplication.activate 在面板隐藏后会被系统拒绝。
+        openApplication(entry)
 
-        // 通用兜底：有些应用（Finder、部分系统应用）不响应 reopen，补一个 ⌘N。
-        // 此时应用已在前台，新建的窗口会自然获得焦点。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+        // 有些应用（Finder、部分系统应用）激活后不会自己开窗，补一个 ⌘N。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, !self.hasVisibleWindows(pid: running.processIdentifier) else { return }
             self.sendNewWindowShortcut(pid: running.processIdentifier)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.focusFrontWindow(of: running.processIdentifier)
             }
         }
