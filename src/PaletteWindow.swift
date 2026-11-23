@@ -18,7 +18,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var selectedIndex = 0
     private var iconCache: [String: NSImage] = [:]
     private var previousApp: NSRunningApplication?
-    private var escMonitor: Any?
     private var windowedBundleIDs = Set<String>()
     private var runningBundleIDs = Set<String>()
 
@@ -49,25 +48,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         delegate = self
 
         buildUI()
-        installEscMonitor()
-        dbg("esc monitor installed=\(escMonitor != nil)")
-    }
-
-    deinit {
-        removeEscMonitor()
     }
 
     override var canBecomeKey: Bool { true }
-
-    /// 焦点不在输入框时，Esc 仍然关闭面板
-    override func keyDown(with event: NSEvent) {
-        dbg("palette keyDown keyCode=\(event.keyCode)")
-        if event.keyCode == 53 {
-            dismiss(restoreFocus: true)
-            return
-        }
-        super.keyDown(with: event)
-    }
     override var canBecomeMain: Bool { false }
 
     // MARK: - UI
@@ -246,56 +229,16 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     /// 应用层兜底：焦点即使不在输入框，Esc 也能关闭面板
-    /// 常驻监听：只在面板可见时拦截 Esc，避免安装/移除与显示时序竞争
-    private func installEscMonitor() {
-        guard escMonitor == nil else { return }
-        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.isVisible else { return event }
-
-            if event.keyCode == 53 {
-                dbg("resident monitor: esc")
-                self.dismiss(restoreFocus: true)
-                return nil
-            }
-
-            // ⌘1-⌘8 页内快速执行
-            if event.modifierFlags.contains(.command),
-               let chars = event.charactersIgnoringModifiers,
-               chars.count == 1,
-               let number = Int(chars), number >= 1, number <= self.pageSize {
-                self.executePageRow(number - 1)
-                return nil
-            }
-
-            // 左右键：光标还能动就交给输入框，到两端后翻页
-            if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
-                if event.keyCode == 123, self.atStartOfInput() {
-                    self.changePage(by: -1)
-                    return nil
-                }
-                if event.keyCode == 124, self.atEndOfInput() {
-                    self.changePage(by: 1)
-                    return nil
-                }
-            }
-
-            return event
-        }
-    }
-
-    private func removeEscMonitor() {
-        if let monitor = escMonitor {
-            NSEvent.removeMonitor(monitor)
-            escMonitor = nil
-        }
-    }
-
     func windowDidResignKey(_ notification: Notification) {
-        dbg("windowDidResignKey")
-        for window in NSApp.windows {
-            dbg("  win \(type(of: window)) visible=\(window.isVisible) key=\(window.isKeyWindow) frame=\(window.frame)")
+        let front = NSWorkspace.shared.frontmostApplication
+        dbg("windowDidResignKey frontmost=\(front?.localizedName ?? "nil") (\(front?.bundleIdentifier ?? "-"))")
+
+        // 延迟判断：瞬时失焦（输入法弹窗、系统提示）不该直接把面板关掉
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.isVisible, !self.isKeyWindow else { return }
+            dbg("still not key after 0.25s, dismiss")
+            self.dismiss(restoreFocus: false)
         }
-        dismiss(restoreFocus: false)
     }
 
     // MARK: - 数据
@@ -415,9 +358,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             return true
         case #selector(NSResponder.insertNewline(_:)):
             executeSelected()
-            return true
-        case #selector(NSResponder.cancelOperation(_:)):
-            dismiss(restoreFocus: true)
             return true
         default:
             return false

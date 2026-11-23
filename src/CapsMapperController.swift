@@ -75,6 +75,10 @@ final class CapsMapperController {
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if keyCode == 53 {
+            dbg("caps sees esc: layerActive=\(isLayerActive)")
+        }
+
         if keyCode == 80 { // F19
             if type == .keyDown { isLayerActive = true; dbg("F19 down") }
             else if type == .keyUp { isLayerActive = false; dbg("F19 up") }

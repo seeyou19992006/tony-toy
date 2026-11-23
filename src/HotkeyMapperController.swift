@@ -68,10 +68,15 @@ final class HotkeyMapperController {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // 裸 Esc 直接放行：它不属于热键层（配置里只有 ⌘Esc），
-        // 让面板/输入法立即拿到，避免在 tap 里走匹配链路
-        let modifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
-        if keyCode == 53, event.flags.intersection(modifiers).isEmpty {
+        if keyCode == 53 {
+            dbg("hotkey sees esc: flags=\(event.flags.rawValue)")
+        }
+
+        // Esc 一律放行。Cmd 修饰键状态可能残留（本程序接管 ⌘Tab 后更容易出现），
+        // 一旦残留，Esc 会被误判成 ⌘Esc 并命中 hotkeys.json 的映射而遭吞掉。
+        // 代价是配置文件里的 escape+command 映射不再生效，Esc 优先交给当前窗口。
+        let blockers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate]
+        if keyCode == 53, event.flags.intersection(blockers).isEmpty {
             return Unmanaged.passUnretained(event)
         }
 

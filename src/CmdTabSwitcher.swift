@@ -85,6 +85,10 @@ final class CmdTabSwitcher {
             return Unmanaged.passUnretained(event)
         }
 
+        if keyCode == 53 {
+            dbg("cmdtab sees esc: active=\(isActive)")
+        }
+
         // 按住 ⌘ 时 Esc 取消、回车直接执行
         if type == .keyDown, isActive {
             if keyCode == escKeyCode {

@@ -7,6 +7,7 @@ final class LauncherController {
     private let index = AppIndex()
     private let activator = Activator()
     private let hotkey = LauncherHotkeyManager()
+    private let escTap = LauncherEscTap()
     private var palette: PaletteWindow?
 
     private init() {}
@@ -19,6 +20,8 @@ final class LauncherController {
         palette = PaletteWindow(index: index) { [weak self] entry in
             self?.activator.activate(entry)
         }
+
+        escTap.start()
 
         let registered = hotkey.register(LauncherSettings.selectedHotkey) { [weak self] in
             self?.show()
