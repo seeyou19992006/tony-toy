@@ -87,7 +87,13 @@ final class SwitcherController {
         window.hide()
         guard let target else { return }
 
-        // 先激活应用，再抬升具体窗口
+        guard let element = target.window else {
+            // 无窗口：复用启动器的逻辑，reopen 无效时补 ⌘N 让应用自己开窗
+            activator.activate(target.entry)
+            return
+        }
+
+        // 有窗口：先激活应用，再抬升具体窗口
         if let running = NSRunningApplication
             .runningApplications(withBundleIdentifier: target.entry.bundleID).first {
             running.activate(options: [.activateIgnoringOtherApps])
@@ -95,7 +101,6 @@ final class SwitcherController {
             activator.activate(target.entry)
         }
 
-        guard let element = target.window else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
             AXUIElementPerformAction(element, kAXRaiseAction as CFString)
