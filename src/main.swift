@@ -77,7 +77,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isHotkeyEnabled = true
     private var isCmdTabEnabled = true
     private var isCapsEnabled = true
-    private var isPasswordManagerEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dbg("=== launch pid=\(getpid()) ===")
@@ -159,8 +158,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
+        // 这是「打开窗口」的动作项，不是开关，不要带勾选
         let pwdItem = NSMenuItem(title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
-        pwdItem.state = isPasswordManagerEnabled ? .on : .off
         menu.addItem(pwdItem)
 
         let launcherItem = NSMenuItem(title: "应用启动器 (\(LauncherSettings.selectedHotkey.title))",
