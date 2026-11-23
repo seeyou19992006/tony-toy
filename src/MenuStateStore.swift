@@ -6,7 +6,6 @@ struct MenuToggleState {
     let isHotkeyEnabled: Bool
     let isCmdTabEnabled: Bool
     let isMouseFollowEnabled: Bool
-    let isScrollInvertEnabled: Bool
 
     static let `default` = MenuToggleState(
         isVolumeEnabled: true,
@@ -14,7 +13,6 @@ struct MenuToggleState {
         isHotkeyEnabled: true,
         isCmdTabEnabled: false,
         isMouseFollowEnabled: false,
-        isScrollInvertEnabled: false
     )
 }
 
@@ -25,7 +23,6 @@ final class MenuStateStore {
         static let isHotkeyEnabled = "menu.isHotkeyEnabled"
         static let isCmdTabEnabled = "menu.isCmdTabEnabled"
         static let isMouseFollowEnabled = "menu.isMouseFollowEnabled"
-        static let isScrollInvertEnabled = "menu.isScrollInvertEnabled"
     }
 
     private let defaults: UserDefaults
@@ -48,7 +45,6 @@ final class MenuStateStore {
             isHotkeyEnabled: defaults.object(forKey: Key.isHotkeyEnabled) as? Bool ?? true,
             isCmdTabEnabled: defaults.object(forKey: Key.isCmdTabEnabled) as? Bool ?? false,
             isMouseFollowEnabled: defaults.object(forKey: Key.isMouseFollowEnabled) as? Bool ?? false,
-            isScrollInvertEnabled: defaults.object(forKey: Key.isScrollInvertEnabled) as? Bool ?? false
         )
     }
 
@@ -58,7 +54,6 @@ final class MenuStateStore {
         defaults.set(state.isHotkeyEnabled, forKey: Key.isHotkeyEnabled)
         defaults.set(state.isCmdTabEnabled, forKey: Key.isCmdTabEnabled)
         defaults.set(state.isMouseFollowEnabled, forKey: Key.isMouseFollowEnabled)
-        defaults.set(state.isScrollInvertEnabled, forKey: Key.isScrollInvertEnabled)
     }
 
     /// 供 Activator 直接读取，避免层层传参

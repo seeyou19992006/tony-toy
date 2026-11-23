@@ -71,14 +71,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let passwordManager = PasswordManagerWindow()
     private let launcherController = LauncherController.shared
     private let cmdTabSwitcher = CmdTabSwitcher()
-    private let scrollInverter = ScrollInverter()
     private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
 
     private var isVolumeEnabled = true
     private var isHotkeyEnabled = true
     private var isCmdTabEnabled = true
     private var isMouseFollowEnabled = false
-    private var isScrollInvertEnabled = false
     private var isCapsEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -89,7 +87,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isHotkeyEnabled = persistedState.isHotkeyEnabled
         isCmdTabEnabled = persistedState.isCmdTabEnabled
         isMouseFollowEnabled = persistedState.isMouseFollowEnabled
-        isScrollInvertEnabled = persistedState.isScrollInvertEnabled
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
@@ -119,13 +116,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()
 
-        // 鼠标滚轮反向
-        scrollInverter.setEnabled(isScrollInvertEnabled)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         // 确保退出时清理映射
-        scrollInverter.setEnabled(false)
         capsController.setEnabled(false)
         hotkeyController.setEnabled(false)
         mouseLayerController.setEnabled(false)
@@ -173,11 +167,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mouseFollowItem.state = isMouseFollowEnabled ? .on : .off
         menu.addItem(mouseFollowItem)
 
-        let scrollItem = NSMenuItem(title: "触摸板反向（配合关闭系统自然滚动）",
-                                    action: #selector(toggleScrollInvert), keyEquivalent: "")
-        scrollItem.state = isScrollInvertEnabled ? .on : .off
-        menu.addItem(scrollItem)
-        
         menu.addItem(NSMenuItem.separator())
         
         // 这是「打开窗口」的动作项，不是开关，不要带勾选
@@ -230,13 +219,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.arguments = ["-c", "sleep 0.6; /usr/bin/open -n '\''\(path)'\''"]
         try? process.run()
         NSApp.terminate(nil)
-    }
-
-    @objc private func toggleScrollInvert() {
-        isScrollInvertEnabled.toggle()
-        scrollInverter.setEnabled(isScrollInvertEnabled)
-        persistMenuState()
-        buildMenu()
     }
 
     @objc private func toggleMouseFollow() {
@@ -342,7 +324,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 isHotkeyEnabled: isHotkeyEnabled,
                 isCmdTabEnabled: isCmdTabEnabled,
                 isMouseFollowEnabled: isMouseFollowEnabled,
-                isScrollInvertEnabled: isScrollInvertEnabled
             )
         )
     }
