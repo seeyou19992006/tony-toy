@@ -75,14 +75,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isVolumeEnabled = true
     private var isHotkeyEnabled = true
+    private var isCmdTabEnabled = true
     private var isCapsEnabled = true
     private var isPasswordManagerEnabled = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        dbg("=== launch pid=\(getpid()) ===")
         let persistedState = menuStateStore.load()
         isVolumeEnabled = persistedState.isVolumeEnabled
         isCapsEnabled = persistedState.isCapsEnabled
         isHotkeyEnabled = persistedState.isHotkeyEnabled
+        isCmdTabEnabled = persistedState.isCmdTabEnabled
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
@@ -105,7 +108,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 启动应用启动器 (⌥D)
         launcherController.start()
         // 接管 ⌘Tab
-        cmdTabSwitcher.start()
+        if isCmdTabEnabled {
+            cmdTabSwitcher.start()
+        }
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -147,6 +152,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeyItem = NSMenuItem(title: "全局快捷键层", action: #selector(toggleHotkeys), keyEquivalent: "")
         hotkeyItem.state = isHotkeyEnabled ? .on : .off
         menu.addItem(hotkeyItem)
+
+        let cmdTabItem = NSMenuItem(title: "⌘Tab 接管", action: #selector(toggleCmdTab), keyEquivalent: "")
+        cmdTabItem.state = isCmdTabEnabled ? .on : .off
+        menu.addItem(cmdTabItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -185,6 +194,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
     }
     
+    @objc private func toggleCmdTab() {
+        isCmdTabEnabled.toggle()
+        if isCmdTabEnabled {
+            cmdTabSwitcher.start()
+        } else {
+            cmdTabSwitcher.stop()
+        }
+        persistMenuState()
+        buildMenu()
+    }
+
     @objc private func showPasswordManager() {
         if !passwordManager.isVisible {
             // 记录当前前台应用，以便粘贴密码时恢复焦点
@@ -268,7 +288,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             MenuToggleState(
                 isVolumeEnabled: isVolumeEnabled,
                 isCapsEnabled: isCapsEnabled,
-                isHotkeyEnabled: isHotkeyEnabled
+                isHotkeyEnabled: isHotkeyEnabled,
+                isCmdTabEnabled: isCmdTabEnabled
             )
         )
     }

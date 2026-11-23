@@ -26,6 +26,7 @@ final class CmdTabSwitcher {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
             retryCount += 1
+            dbg("cmdtap failed retry=\(retryCount)")
             if retryCount <= 10 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                     self?.start()
@@ -34,6 +35,7 @@ final class CmdTabSwitcher {
             return
         }
         retryCount = 0
+        dbg("cmdtap created")
         eventTap = tap
         CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)

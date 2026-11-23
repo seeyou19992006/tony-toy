@@ -50,6 +50,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
         buildUI()
         installEscMonitor()
+        dbg("esc monitor installed=\(escMonitor != nil)")
     }
 
     deinit {

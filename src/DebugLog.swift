@@ -1,7 +1,7 @@
 import Foundation
 
 /// 仅在带 --debug 启动时写文件日志，避免影响正常运行
-let debugEnabled = ProcessInfo.processInfo.arguments.contains("--debug")
+let debugEnabled = true
 
 func dbg(_ message: String) {
     guard debugEnabled else { return }
