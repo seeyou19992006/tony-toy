@@ -43,7 +43,7 @@ final class SwitcherTile: NSView {
     override func layout() {
         super.layout()
         highlight.frame = bounds
-        let iconSide: CGFloat = 66
+        let iconSide: CGFloat = 80
         iconView.frame = NSRect(x: (bounds.width - iconSide) / 2,
                                 y: bounds.height - iconSide - 22,
                                 width: iconSide, height: iconSide)
@@ -83,8 +83,8 @@ final class SwitcherWindow: NSPanel {
     private var rows = 1
     private var cols = 1
 
-    private let cellWidth: CGFloat = 116
-    private let cellHeight: CGFloat = 112
+    private let cellWidth: CGFloat = 140
+    private let cellHeight: CGFloat = 134
     private let padding: CGFloat = 20
     private let headerHeight: CGFloat = 46
 
@@ -163,7 +163,7 @@ final class SwitcherWindow: NSPanel {
         tiles.forEach { $0.removeFromSuperview() }
         tiles = items.map { item in
             let icon = NSWorkspace.shared.icon(forFile: item.entry.url.path)
-            icon.size = NSSize(width: 66, height: 66)
+            icon.size = NSSize(width: 80, height: 80)
             return SwitcherTile(item: item, icon: icon)
         }
         tiles.forEach { background.addSubview($0) }
