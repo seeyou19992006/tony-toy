@@ -45,4 +45,23 @@ final class LauncherController {
     func rescan() {
         index.scan()
     }
+
+    // MARK: - ⌘Tab 切换器
+
+    func beginSwitcher() {
+        if palette == nil { start() }
+        palette?.show()
+    }
+
+    func moveSwitcherSelection(by delta: Int) {
+        palette?.switcherMove(by: delta)
+    }
+
+    func commitSwitcher() {
+        palette?.switcherCommit()
+    }
+
+    func cancelSwitcher() {
+        palette?.switcherCancel()
+    }
 }

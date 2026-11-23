@@ -70,6 +70,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuStateStore = MenuStateStore()
     private let passwordManager = PasswordManagerWindow()
     private let launcherController = LauncherController.shared
+    private let cmdTabSwitcher = CmdTabSwitcher()
     private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
 
     private var isVolumeEnabled = true
@@ -103,6 +104,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 启动应用启动器 (⌥D)
         launcherController.start()
+        // 接管 ⌘Tab
+        cmdTabSwitcher.start()
     }
     
     func applicationWillTerminate(_ notification: Notification) {

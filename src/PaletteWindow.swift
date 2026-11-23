@@ -423,6 +423,23 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
     }
 
+    // MARK: - ⌘Tab 切换器入口
+
+    func switcherMove(by delta: Int) {
+        guard isVisible else { return }
+        moveSelection(by: delta)
+    }
+
+    func switcherCommit() {
+        guard isVisible else { return }
+        executeSelected()
+    }
+
+    func switcherCancel() {
+        guard isVisible else { return }
+        dismiss(restoreFocus: true)
+    }
+
     private func atStartOfInput() -> Bool {
         guard let editor = searchField.currentEditor() else { return true }
         let range = editor.selectedRange
