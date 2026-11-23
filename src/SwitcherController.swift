@@ -8,6 +8,11 @@ struct SwitcherItem {
     let windowTitle: String?
     let hasWindow: Bool
 
+    /// 用于 MRU 历史的稳定标识
+    var identity: String {
+        "\(entry.bundleID)|\(windowTitle ?? "")"
+    }
+
     /// 磁贴下的小字
     var displayTitle: String {
         windowTitle ?? entry.name
@@ -55,7 +60,20 @@ final class SwitcherController {
 
     private let activator = Activator()
 
+    /// 最近使用的窗口，越靠前越新；用于「上一个窗口」的切换
+    private static var mruOrder: [String] = []
+    private static let mruLimit = 20
+
     private init() {}
+
+    private static func remember(_ item: SwitcherItem) {
+        let key = item.identity
+        mruOrder.removeAll { $0 == key }
+        mruOrder.insert(key, at: 0)
+        if mruOrder.count > mruLimit {
+            mruOrder.removeLast(mruOrder.count - mruLimit)
+        }
+    }
 
     var isVisible: Bool {
         isShown && windows.contains { $0.isVisible }
@@ -179,6 +197,7 @@ final class SwitcherController {
         let target = current
         hide()
         guard let target else { return }
+        Self.remember(target)
 
         guard let element = target.window else {
             // 无窗口：复用启动器的逻辑，reopen 无效时补 ⌘N 让应用自己开窗
@@ -240,6 +259,23 @@ final class SwitcherController {
             }
         }
 
-        return items
+        return sortByMRU(items)
+    }
+
+    /// 按最近使用排序，保证「上一个窗口」稳定落在第二位
+    private static func sortByMRU(_ items: [SwitcherItem]) -> [SwitcherItem] {
+        guard !mruOrder.isEmpty else { return items }
+
+        var rank: [String: Int] = [:]
+        for (index, key) in mruOrder.enumerated() {
+            rank[key] = index
+        }
+
+        return items.enumerated().sorted { left, right in
+            let leftRank = rank[left.element.identity] ?? Int.max
+            let rightRank = rank[right.element.identity] ?? Int.max
+            if leftRank != rightRank { return leftRank < rightRank }
+            return left.offset < right.offset
+        }.map(\.element)
     }
 }
