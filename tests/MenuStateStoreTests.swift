@@ -25,7 +25,8 @@ struct MenuStateStoreTests {
         assertTrue(initial.isHotkeyEnabled, "hotkey should default to enabled")
 
         let expected = MenuToggleState(
-            isVolumeEnabled: false, isCapsEnabled: true, isHotkeyEnabled: false)
+            isVolumeEnabled: false, isCapsEnabled: true, isHotkeyEnabled: false,
+            isCmdTabEnabled: true, isMouseFollowEnabled: true)
         store.save(expected)
 
         let reloaded = store.load()
@@ -34,6 +35,11 @@ struct MenuStateStoreTests {
         assertTrue(reloaded.isCapsEnabled == expected.isCapsEnabled, "caps state should persist")
         assertTrue(
             reloaded.isHotkeyEnabled == expected.isHotkeyEnabled, "hotkey state should persist")
+        assertTrue(
+            reloaded.isCmdTabEnabled == expected.isCmdTabEnabled, "cmdtab state should persist")
+        assertTrue(
+            reloaded.isMouseFollowEnabled == expected.isMouseFollowEnabled,
+            "mouse follow state should persist")
 
         print("MenuStateStoreTests passed")
     }
