@@ -170,6 +170,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
         restartItem.target = self
+        restartItem.image = NSImage(systemSymbolName: "arrow.clockwise",
+                                    accessibilityDescription: "重启")
         menu.addItem(restartItem)
 
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
