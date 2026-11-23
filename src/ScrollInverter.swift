@@ -1,9 +1,11 @@
 import Foundation
 import Cocoa
 
-/// 只反转鼠标滚轮方向，触摸板保持系统自然滚动。
+/// 只反转触摸板滚动方向，鼠标滚轮不动。
+///
+/// 用法：系统设置里关闭「自然滚动」（鼠标变成传统方向），再打开这个开关，
+/// 触摸板被反转回来，于是鼠标传统、触摸板自然。
 /// 依靠 kCGScrollWheelEventIsContinuous 区分两者：触摸板为 1，鼠标滚轮为 0。
-/// 挂在 .cghidEventTap 上，尽量靠近 HID 层，避免被会话层的滚动处理覆盖。
 final class ScrollInverter {
     private static let globalKey = "com.apple.swipescrolldirection" as CFString
     private static let savedOriginalKey = "scrollInverter.originalNaturalScroll"
@@ -68,9 +70,9 @@ final class ScrollInverter {
             return Unmanaged.passUnretained(event)
         }
 
-        // 只反转鼠标滚轮，触摸板保持自然
+        // 只反转触摸板（连续滚动）；鼠标滚轮保持系统方向
         let isContinuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        guard !isContinuous else { return Unmanaged.passUnretained(event) }
+        guard isContinuous else { return Unmanaged.passUnretained(event) }
 
         event.setIntegerValueField(.scrollWheelEventDeltaAxis1,
                                    value: -event.getIntegerValueField(.scrollWheelEventDeltaAxis1))

@@ -173,7 +173,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mouseFollowItem.state = isMouseFollowEnabled ? .on : .off
         menu.addItem(mouseFollowItem)
 
-        let scrollItem = NSMenuItem(title: "鼠标滚轮反向（触摸板不反转）",
+        let scrollItem = NSMenuItem(title: "触摸板反向（配合关闭系统自然滚动）",
                                     action: #selector(toggleScrollInvert), keyEquivalent: "")
         scrollItem.state = isScrollInvertEnabled ? .on : .off
         menu.addItem(scrollItem)
