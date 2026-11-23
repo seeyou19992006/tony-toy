@@ -12,7 +12,9 @@ final class LauncherController {
     private init() {}
 
     func start() {
+        dbg("launcher start begin")
         index.scan()
+        dbg("launcher scan done entries=\(index.entries.count)")
 
         palette = PaletteWindow(index: index) { [weak self] entry in
             self?.activator.activate(entry)
@@ -21,12 +23,14 @@ final class LauncherController {
         let registered = hotkey.register(LauncherSettings.selectedHotkey) { [weak self] in
             self?.show()
         }
+        dbg("launcher hotkey registered=\(registered) key=\(LauncherSettings.selectedHotkey.title)")
         if !registered {
-            NSLog("启动器快捷键注册失败: \(LauncherSettings.selectedHotkey.title)")
+            NSLog("launcher hotkey register failed: \(LauncherSettings.selectedHotkey.title)")
         }
     }
 
     func show() {
+        dbg("launcher show called")
         if palette == nil {
             start()
         }

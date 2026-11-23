@@ -48,6 +48,15 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// 焦点不在输入框时，Esc 仍然关闭面板
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            dismiss(restoreFocus: true)
+            return
+        }
+        super.keyDown(with: event)
+    }
     override var canBecomeMain: Bool { false }
 
     // MARK: - UI
@@ -134,7 +143,17 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             NSApp.activate(ignoringOtherApps: true)
         }
         makeKeyAndOrderFront(nil)
-        makeFirstResponder(searchField)
+
+        // 窗口成为 key 是异步的，必须等下一轮 runloop 再设焦点，否则输入框拿不到键盘事件
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            dbg("active=\(NSApp.isActive) isKey=\(self.isKeyWindow) appKey=\(String(describing: NSApp.keyWindow))")
+            let ok = self.makeFirstResponder(self.searchField)
+            dbg("makeFirstResponder ok=\(ok) first=\(String(describing: self.firstResponder))")
+            if let editor = self.searchField.currentEditor() {
+                editor.selectedRange = NSRange(location: (self.searchField.stringValue as NSString).length, length: 0)
+            }
+        }
         if let editor = searchField.currentEditor() {
             editor.selectedRange = NSRange(location: (searchField.stringValue as NSString).length, length: 0)
         }
@@ -185,6 +204,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     func windowDidResignKey(_ notification: Notification) {
         dbg("windowDidResignKey")
+        for window in NSApp.windows {
+            dbg("  win \(type(of: window)) visible=\(window.isVisible) key=\(window.isKeyWindow) frame=\(window.frame)")
+        }
         dismiss(restoreFocus: false)
     }
 
@@ -280,6 +302,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        dbg("doCommandBy \(commandSelector)")
         switch commandSelector {
         case #selector(NSResponder.moveUp(_:)):
             moveSelection(by: -1)

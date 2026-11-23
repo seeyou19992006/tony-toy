@@ -20,7 +20,7 @@ final class LauncherHotkeyManager {
 
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: 1)
         let status = RegisterEventHotKey(spec.keyCode, spec.modifiers, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &hotKeyRef)
+                                         GetEventDispatcherTarget(), 0, &hotKeyRef)
         guard status == noErr, hotKeyRef != nil else {
             NSLog("热键注册失败: \(status)")
             return false
@@ -39,7 +39,7 @@ final class LauncherHotkeyManager {
             return noErr
         }
 
-        let installStatus = InstallEventHandler(GetApplicationEventTarget(), handler, 1,
+        let installStatus = InstallEventHandler(GetEventDispatcherTarget(), handler, 1,
                                                 &eventSpec, selfPointer, &eventHandler)
         if installStatus != noErr {
             NSLog("热键事件处理器安装失败: \(installStatus)")
