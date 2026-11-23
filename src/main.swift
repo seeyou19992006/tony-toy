@@ -277,4 +277,6 @@ UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
+// 与独立版对齐：run 之前就确定 activationPolicy，窗口的 field editor 行为才正常
+app.setActivationPolicy(.accessory)
 app.run()

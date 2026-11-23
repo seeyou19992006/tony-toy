@@ -57,6 +57,10 @@ final class HotkeyMapperController {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+        if keyCode == 53 {
+            let matched = mappings.first { $0.matches(keyCode: keyCode, flags: flags) }
+            dbg("tap esc: type=\(type.rawValue) flags=\(flags.rawValue) matched=\(matched != nil) count=\(mappings.count)")
+        }
         guard let mapping = mappings.first(where: { $0.matches(keyCode: keyCode, flags: flags) }) else {
             logModifierMismatchIfNeeded(keyCode: keyCode, flags: flags, type: type)
             return Unmanaged.passUnretained(event)
