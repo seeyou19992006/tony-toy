@@ -1,11 +1,11 @@
 import Cocoa
+import CoreImage
 
-/// 单个磁贴：图标 + 窗口标题 + 窗口角标
+/// 单个磁贴：图标 + 窗口标题
 final class SwitcherTile: NSView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let highlight = NSView()
-    private let badge = NSView()
 
     var isSelected = false {
         didSet { updateHighlight() }
@@ -18,7 +18,6 @@ final class SwitcherTile: NSView {
         highlight.layer?.cornerRadius = 10
         addSubview(highlight)
 
-        iconView.image = icon
         iconView.imageScaling = .scaleProportionallyUpOrDown
         addSubview(iconView)
 
@@ -26,18 +25,12 @@ final class SwitcherTile: NSView {
         nameLabel.font = .systemFont(ofSize: 11.5)
         nameLabel.textColor = .white
         nameLabel.alignment = .center
+        // 没有窗口的应用：图标去色压暗，一眼区分
+        iconView.image = item.hasWindow ? icon : Self.desaturated(icon)
         nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.textColor = .white
+        nameLabel.alignment = .center
         addSubview(nameLabel)
-
-        // 角标：绿点=有窗口，灰点=仅后台运行
-        badge.wantsLayer = true
-        badge.layer?.cornerRadius = 5
-        badge.layer?.borderWidth = 2
-        badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
-        badge.layer?.backgroundColor = (item.hasWindow
-            ? NSColor.systemGreen
-            : NSColor(white: 0.62, alpha: 1)).cgColor
-        addSubview(badge)
 
         updateHighlight()
     }
@@ -49,13 +42,25 @@ final class SwitcherTile: NSView {
     override func layout() {
         super.layout()
         highlight.frame = bounds
-        let iconSide: CGFloat = 52
+        let iconSide: CGFloat = 66
         iconView.frame = NSRect(x: (bounds.width - iconSide) / 2,
                                 y: bounds.height - iconSide - 22,
                                 width: iconSide, height: iconSide)
-        nameLabel.frame = NSRect(x: 4, y: 6, width: bounds.width - 8, height: 16)
-        badge.frame = NSRect(x: iconView.frame.maxX - 12, y: iconView.frame.maxY - 12,
-                             width: 10, height: 10)
+        nameLabel.frame = NSRect(x: 2, y: 6, width: bounds.width - 4, height: 16)
+    }
+
+    /// 去色 + 压暗，表示该应用没有打开的窗口
+    private static func desaturated(_ image: NSImage) -> NSImage {
+        guard let tiff = image.tiffRepresentation,
+              let ci = CIImage(data: tiff),
+              let filter = CIFilter(name: "CIColorControls") else { return image }
+        filter.setValue(ci, forKey: kCIInputImageKey)
+        filter.setValue(0, forKey: kCIInputSaturationKey)
+        filter.setValue(-0.18, forKey: kCIInputBrightnessKey)
+        guard let output = filter.outputImage else { return image }
+        let result = NSImage(size: image.size)
+        result.addRepresentation(NSCIImageRep(ciImage: output))
+        return result
     }
 
     private func updateHighlight() {
@@ -78,8 +83,8 @@ final class SwitcherWindow: NSPanel {
     private var rows = 1
     private var cols = 1
 
-    private let cellWidth: CGFloat = 104
-    private let cellHeight: CGFloat = 100
+    private let cellWidth: CGFloat = 116
+    private let cellHeight: CGFloat = 112
     private let padding: CGFloat = 20
     private let headerHeight: CGFloat = 46
 
@@ -144,19 +149,21 @@ final class SwitcherWindow: NSPanel {
         orderOut(nil)
     }
 
-    /// 竖向 x 行、横向 x+2 列，取最小的 x 容纳全部磁贴
+    /// 横向 x+2 列，取最小的 x 容纳全部磁贴；行数按实际需要计算
     static func grid(for count: Int) -> (rows: Int, cols: Int) {
         guard count > 0 else { return (1, 3) }
         var x = 1
         while x * (x + 2) < count { x += 1 }
-        return (x, x + 2)
+        let cols = x + 2
+        let rows = (count + cols - 1) / cols
+        return (rows, cols)
     }
 
     private func rebuildTiles() {
         tiles.forEach { $0.removeFromSuperview() }
         tiles = items.map { item in
             let icon = NSWorkspace.shared.icon(forFile: item.entry.url.path)
-            icon.size = NSSize(width: 52, height: 52)
+            icon.size = NSSize(width: 66, height: 66)
             return SwitcherTile(item: item, icon: icon)
         }
         tiles.forEach { background.addSubview($0) }
@@ -217,14 +224,37 @@ final class SwitcherWindow: NSPanel {
         items.indices.contains(selected) ? items[selected] : nil
     }
 
-    /// 横向移动：行内循环
+    /// 横向移动：行末跳到下一行末尾，行首跳到上一行末尾
     func moveHorizontal(by delta: Int) {
         guard !items.isEmpty else { return }
         let row = selected / cols
         let column = selected % cols
-        let newColumn = (column + delta + cols) % cols
-        let candidate = row * cols + newColumn
-        selected = candidate < items.count ? candidate : selected
+
+        if delta > 0 {
+            let nextInRow = selected + 1
+            // 本行还有下一个格子
+            if column + 1 < cols, nextInRow < items.count {
+                selected = nextInRow
+            } else {
+                // 行末：跳到下一行末尾；没有下一行就回到开头
+                let nextRowStart = (row + 1) * cols
+                if nextRowStart < items.count {
+                    selected = min(nextRowStart + cols - 1, items.count - 1)
+                } else {
+                    selected = 0
+                }
+            }
+        } else {
+            if column > 0 {
+                selected -= 1
+            } else if row > 0 {
+                // 行首：跳到上一行末尾
+                selected = min((row - 1) * cols + cols - 1, items.count - 1)
+            } else {
+                // 第一行行首：回到最后一项
+                selected = items.count - 1
+            }
+        }
         applySelection()
     }
 
