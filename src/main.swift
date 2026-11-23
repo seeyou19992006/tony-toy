@@ -47,6 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let capsController = CapsMapperController()
     private let menuStateStore = MenuStateStore()
     private let passwordManager = PasswordManagerWindow()
+    private let launcherController = LauncherController.shared
     private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
 
     private var isVolumeEnabled = true
@@ -77,6 +78,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 注册密码管理器快捷键 (Cmd+Shift+V)
         registerPasswordManagerHotkey()
+
+        // 启动应用启动器 (⌥D)
+        launcherController.start()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -125,6 +129,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pwdItem.state = isPasswordManagerEnabled ? .on : .off
         menu.addItem(pwdItem)
 
+        let launcherItem = NSMenuItem(title: "应用启动器 (\(LauncherSettings.selectedHotkey.title))",
+                                      action: #selector(showLauncher), keyEquivalent: "")
+        menu.addItem(launcherItem)
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -172,6 +180,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @objc private func showLauncher() {
+        launcherController.show()
+    }
+
     private func registerPasswordManagerHotkey() {
         // 防止重复安装 handler
         guard !isHotkeyHandlerInstalled else { return }

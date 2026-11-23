@@ -1,0 +1,426 @@
+import Cocoa
+
+/// 居中的搜索面板，回车执行，Esc 或失焦关闭
+final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+
+    private let index: AppIndex
+    private let onExecute: (AppEntry) -> Void
+
+    private let searchField = NSTextField()
+    private let tableView = NSTableView()
+    private let scrollView = NSScrollView()
+    private let background = NSVisualEffectView()
+    private let tintView = NSView()
+
+    private var results: [AppEntry] = []
+    private var iconCache: [String: NSImage] = [:]
+    private var previousApp: NSRunningApplication?
+    private var windowedBundleIDs = Set<String>()
+    private var runningBundleIDs = Set<String>()
+
+    private let panelWidth: CGFloat = 720
+    private let searchAreaHeight: CGFloat = 96
+    private let rowHeight: CGFloat = 66
+    private let listBottomPadding: CGFloat = 14
+    private let maxRows = 8
+
+    private let selectionColor = NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1)
+
+    init(index: AppIndex, onExecute: @escaping (AppEntry) -> Void) {
+        self.index = index
+        self.onExecute = onExecute
+        super.init(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 200),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered,
+                   defer: false)
+
+        isFloatingPanel = true
+        level = .floating
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        appearance = NSAppearance(named: .darkAqua)
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        delegate = self
+
+        buildUI()
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    // MARK: - UI
+
+    private func buildUI() {
+        background.material = .hudWindow
+        background.blendingMode = .behindWindow
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 12
+        background.layer?.masksToBounds = true
+        contentView = background
+
+        // 深色着色层：压暗毛玻璃，保证深色主题下的对比度
+        tintView.wantsLayer = true
+        tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.86).cgColor
+        tintView.autoresizingMask = [.width, .height]
+        tintView.frame = background.bounds
+        background.addSubview(tintView)
+
+        searchField.isBordered = false
+        searchField.drawsBackground = false
+        searchField.focusRingType = .none
+        searchField.font = .systemFont(ofSize: 30, weight: .regular)
+        searchField.textColor = .white
+        searchField.placeholderString = "搜索应用"
+        searchField.delegate = self
+        searchField.translatesAutoresizingMaskIntoConstraints = true
+        searchField.autoresizingMask = [.width, .minYMargin]
+        background.addSubview(searchField)
+
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.autoresizingMask = [.width, .minYMargin]
+        background.addSubview(separator)
+        self.separator = separator
+
+        tableView.headerView = nil
+        tableView.rowHeight = rowHeight
+        tableView.backgroundColor = .clear
+        tableView.selectionHighlightStyle = .regular
+        tableView.style = .plain
+        tableView.allowsEmptySelection = true
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.target = self
+        tableView.doubleAction = #selector(executeSelected)
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("app"))
+        column.width = panelWidth - 20
+        column.resizingMask = .autoresizingMask
+        tableView.addTableColumn(column)
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+
+        scrollView.hasVerticalScroller = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.documentView = tableView
+        scrollView.autoresizingMask = [.width]
+        background.addSubview(scrollView)
+    }
+
+    private var separator: NSBox!
+
+    // MARK: - 显示与关闭
+
+    func show() {
+        dbg("show() 被调用")
+        previousApp = NSWorkspace.shared.frontmostApplication
+
+        // 调试用：--query 预填搜索词
+        if let flag = CommandLine.arguments.firstIndex(of: "--query"),
+           flag + 1 < CommandLine.arguments.count {
+            searchField.stringValue = CommandLine.arguments[flag + 1]
+        } else {
+            searchField.stringValue = ""
+        }
+        refresh()
+
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        makeKeyAndOrderFront(nil)
+        makeFirstResponder(searchField)
+        if let editor = searchField.currentEditor() {
+            editor.selectedRange = NSRange(location: (searchField.stringValue as NSString).length, length: 0)
+        }
+    }
+
+    /// 按结果条数调整面板高度，顶部位置保持不动
+    private func layoutWindow() {
+        guard let screen = targetScreen() else { return }
+        let visible = screen.visibleFrame
+        let rows = results.isEmpty ? 1 : min(results.count, maxRows)
+        let listHeight = CGFloat(rows) * rowHeight
+        let height = searchAreaHeight + listHeight + listBottomPadding
+
+        let topInset = visible.height * 0.18
+        let origin = NSPoint(x: visible.midX - panelWidth / 2,
+                             y: visible.maxY - topInset - height)
+        setFrame(NSRect(origin: origin, size: NSSize(width: panelWidth, height: height)), display: true)
+
+        searchField.frame = NSRect(x: 24, y: height - searchAreaHeight + 26,
+                                   width: panelWidth - 48, height: 40)
+        separator.frame = NSRect(x: 16, y: height - searchAreaHeight,
+                                 width: panelWidth - 32, height: 1)
+        scrollView.frame = NSRect(x: 10, y: listBottomPadding,
+                                  width: panelWidth - 20, height: listHeight)
+        tableView.frame = NSRect(x: 0, y: 0, width: panelWidth - 20, height: listHeight)
+    }
+
+    /// 多显示器下优先跟随鼠标所在屏幕
+    private func targetScreen() -> NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
+            return screen
+        }
+        return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func dismiss(restoreFocus: Bool) {
+        dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
+        guard isVisible else { return }
+        orderOut(nil)
+        if restoreFocus,
+           let previous = previousApp,
+           previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previous.activate(options: [.activateIgnoringOtherApps])
+        }
+        previousApp = nil
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        dbg("windowDidResignKey")
+        dismiss(restoreFocus: false)
+    }
+
+    // MARK: - 数据
+
+    private func refresh() {
+        let keyword = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        windowedBundleIDs = Set(WindowedApps.current().map(\.bundleID))
+        runningBundleIDs = Set(WindowedApps.running().map(\.bundleID))
+        if keyword.isEmpty {
+            // 默认结果：有窗口的在前，后台运行的殿后；都没有时退回完整列表
+            let defaults = WindowedApps.defaultEntries()
+            results = defaults.isEmpty ? index.search("") : defaults
+        } else {
+            results = index.search(keyword)
+        }
+        layoutWindow()
+        tableView.reloadData()
+        guard !results.isEmpty else { return }
+        tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        tableView.scrollRowToVisible(0)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        results.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard results.indices.contains(row) else { return nil }
+        let entry = results[row]
+        let identifier = NSUserInterfaceItemIdentifier("ResultCell")
+
+        let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ResultCell
+            ?? ResultCell(identifier: identifier)
+        cell.configure(name: entry.name,
+                       path: displayPath(for: entry),
+                       icon: icon(for: entry),
+                       shortcut: shortcutLabel(for: row),
+                       selected: row == tableView.selectedRow,
+                       state: runtimeState(for: entry.bundleID))
+        return cell
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowView = ResultRowView()
+        rowView.selectionColor = selectionColor
+        return rowView
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        // 选中态变化需要同步刷新右侧提示（↵ 与 ⌘N 互换）
+        let selected = tableView.selectedRow
+        let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier("app"))
+        guard column >= 0 else { return }
+        let all = IndexSet(integersIn: 0..<results.count)
+        tableView.reloadData(forRowIndexes: all, columnIndexes: IndexSet(integer: column))
+        if selected >= 0 {
+            tableView.scrollRowToVisible(selected)
+        }
+    }
+
+    private func runtimeState(for bundleID: String) -> AppRuntimeState {
+        if windowedBundleIDs.contains(bundleID) { return .runningWithWindow }
+        if runningBundleIDs.contains(bundleID) { return .running }
+        return .notRunning
+    }
+
+    private func displayPath(for entry: AppEntry) -> String {
+        let path = entry.url.path
+        return path.replacingOccurrences(of: NSString(string: "~").expandingTildeInPath,
+                                          with: "~")
+    }
+
+    private func shortcutLabel(for row: Int) -> String {
+        if row == tableView.selectedRow { return "↵" }
+        return row < 9 ? "⌘\(row + 1)" : ""
+    }
+
+    private func icon(for entry: AppEntry) -> NSImage {
+        if let cached = iconCache[entry.bundleID] {
+            return cached
+        }
+        let image = NSWorkspace.shared.icon(forFile: entry.url.path)
+        image.size = NSSize(width: 52, height: 52)
+        iconCache[entry.bundleID] = image
+        return image
+    }
+
+    // MARK: - 键盘
+
+    func controlTextDidChange(_ obj: Notification) {
+        refresh()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.moveUp(_:)):
+            moveSelection(by: -1)
+            return true
+        case #selector(NSResponder.moveDown(_:)):
+            moveSelection(by: 1)
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            executeSelected()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            dismiss(restoreFocus: true)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// ⌘1 到 ⌘9 直接执行对应结果
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+           let chars = event.charactersIgnoringModifiers,
+           chars.count == 1,
+           let number = Int(chars),
+           number >= 1, number <= 9 {
+            executeRow(number - 1)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func moveSelection(by delta: Int) {
+        guard !results.isEmpty else { return }
+        let current = tableView.selectedRow
+        let base = current < 0 ? 0 : current
+        let next = max(0, min(results.count - 1, base + delta))
+        tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+    }
+
+    private func executeRow(_ index: Int) {
+        guard results.indices.contains(index) else { return }
+        let entry = results[index]
+        dismiss(restoreFocus: false)
+        onExecute(entry)
+    }
+
+    @objc private func executeSelected() {
+        executeRow(tableView.selectedRow)
+    }
+}
+
+/// 选中行：青绿圆角底色
+final class ResultRowView: NSTableRowView {
+    var selectionColor: NSColor = .controlAccentColor
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 6, dy: 3)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        selectionColor.setFill()
+        path.fill()
+    }
+
+    override var isEmphasized: Bool {
+        get { true }
+        set {}
+    }
+}
+
+/// 结果行：图标 + 应用名 + 路径 + 快捷键提示
+final class ResultCell: NSTableCellView {
+    private let iconView = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let pathLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
+    private let badge = NSView()
+
+    init(identifier: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(iconView)
+
+        nameLabel.font = .systemFont(ofSize: 16, weight: .regular)
+        nameLabel.textColor = .white
+        nameLabel.lineBreakMode = .byTruncatingTail
+        addSubview(nameLabel)
+
+        pathLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
+        pathLabel.textColor = NSColor.white.withAlphaComponent(0.55)
+        pathLabel.lineBreakMode = .byTruncatingMiddle
+        addSubview(pathLabel)
+
+        shortcutLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        shortcutLabel.textColor = NSColor.white.withAlphaComponent(0.6)
+        shortcutLabel.alignment = .right
+        addSubview(shortcutLabel)
+
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 8
+        badge.layer?.borderWidth = 2
+        badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
+        badge.isHidden = true
+        addSubview(badge)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) 未实现")
+    }
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        iconView.frame = NSRect(x: 12, y: (height - 52) / 2, width: 52, height: 52)
+        nameLabel.frame = NSRect(x: 78, y: height / 2 + 2, width: max(0, bounds.width - 190), height: 20)
+        pathLabel.frame = NSRect(x: 78, y: height / 2 - 18, width: max(0, bounds.width - 190), height: 15)
+        shortcutLabel.frame = NSRect(x: bounds.width - 90, y: (height - 16) / 2, width: 76, height: 16)
+        badge.frame = NSRect(x: iconView.frame.maxX - 17, y: iconView.frame.maxY - 17, width: 16, height: 16)
+    }
+
+    func configure(name: String, path: String, icon: NSImage, shortcut: String,
+                   selected: Bool, state: AppRuntimeState) {
+        nameLabel.stringValue = name
+        pathLabel.stringValue = path
+        shortcutLabel.stringValue = shortcut
+        iconView.image = icon
+        nameLabel.textColor = .white
+        pathLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.8 : 0.55)
+        shortcutLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.95 : 0.6)
+
+        // 图标右上角：绿点=有窗口，灰点=后台运行，无点=未运行
+        switch state {
+        case .runningWithWindow:
+            badge.isHidden = false
+            badge.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        case .running:
+            badge.isHidden = false
+            badge.layer?.backgroundColor = NSColor(white: 0.62, alpha: 1).cgColor
+        case .notRunning:
+            badge.isHidden = true
+        }
+        needsLayout = true
+    }
+}
