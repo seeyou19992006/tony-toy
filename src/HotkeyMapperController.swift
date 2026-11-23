@@ -6,6 +6,7 @@ final class HotkeyMapperController {
     private let configStore = HotkeyMappingConfigStore()
     private let actionExecutor = AppActionExecutor()
     private var mappings: [HotkeyResolvedMapping] = []
+    private var retryCount = 0
 
     func setEnabled(_ enabled: Bool) {
         if enabled { start() } else { stop() }
@@ -32,7 +33,17 @@ final class HotkeyMapperController {
                 return controller.handleEvent(type: type, event: event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else { return }
+        ) else {
+            retryCount += 1
+            if retryCount <= 10 {
+                fputs("HotkeyMapper tapCreate failed, retry \(retryCount)\n", stderr)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.start()
+                }
+            }
+            return
+        }
+        retryCount = 0
 
         eventTap = tap
         CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
@@ -56,11 +67,15 @@ final class HotkeyMapperController {
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let flags = event.flags
-        if keyCode == 53 {
-            let matched = mappings.first { $0.matches(keyCode: keyCode, flags: flags) }
-            dbg("tap esc: type=\(type.rawValue) flags=\(flags.rawValue) matched=\(matched != nil) count=\(mappings.count)")
+
+        // 裸 Esc 直接放行：它不属于热键层（配置里只有 ⌘Esc），
+        // 让面板/输入法立即拿到，避免在 tap 里走匹配链路
+        let modifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
+        if keyCode == 53, event.flags.intersection(modifiers).isEmpty {
+            return Unmanaged.passUnretained(event)
         }
+
+        let flags = event.flags
         guard let mapping = mappings.first(where: { $0.matches(keyCode: keyCode, flags: flags) }) else {
             logModifierMismatchIfNeeded(keyCode: keyCode, flags: flags, type: type)
             return Unmanaged.passUnretained(event)

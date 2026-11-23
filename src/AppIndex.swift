@@ -4,6 +4,7 @@ struct AppEntry: Hashable {
     let name: String
     let bundleID: String
     let url: URL
+    var alternateNames: [String] = []
     var pinyinFulls: [String] = []
     var pinyinInitials: [String] = []
 
@@ -20,10 +21,37 @@ struct AppEntry: Hashable {
 final class AppIndex {
     private(set) var entries: [AppEntry] = []
 
+    /// 系统应用的中文名不在自己的 Info.plist 里，系统 API 取不到，只能内置一份常见对照
+    private static let chineseAliases: [String: String] = [
+        "com.apple.finder": "访达",
+        "com.apple.systempreferences": "系统设置",
+        "com.apple.ActivityMonitor": "活动监视器",
+        "com.apple.Terminal": "终端",
+        "com.apple.mail": "邮件",
+        "com.apple.iCal": "日历",
+        "com.apple.Notes": "备忘录",
+        "com.apple.Music": "音乐",
+        "com.apple.Photos": "照片",
+        "com.apple.calculator": "计算器",
+        "com.apple.Dictionary": "词典",
+        "com.apple.reminders": "提醒事项",
+        "com.apple.Maps": "地图",
+        "com.apple.FontBook": "字体册",
+        "com.apple.Preview": "预览",
+        "com.apple.TextEdit": "文本编辑",
+        "com.apple.DiskUtility": "磁盘工具",
+        "com.apple.ScreenCaptureUI": "截屏",
+        "com.apple.MobileSMS": "信息",
+        "com.apple.FaceTime": "FaceTime",
+        "com.apple.Safari": "Safari",
+        "com.apple.AppStore": "App Store"
+    ]
+
     private let roots = [
         "/Applications",
         "/System/Applications",
-        NSString(string: "~/Applications").expandingTildeInPath
+        NSString(string: "~/Applications").expandingTildeInPath,
+        "/System/Library/CoreServices"
     ]
 
     func scan() {
@@ -62,6 +90,11 @@ final class AppIndex {
         let bundle = Bundle(url: url)
         let info = bundle?.infoDictionary
 
+        // CoreServices 里混着 Dock 这类后台组件，只收有界面的
+        if path.contains("/CoreServices/"), (info?["LSUIElement"] as? Bool) == true {
+            return nil
+        }
+
         guard let bundleID = (info?["CFBundleIdentifier"] as? String) ?? bundle?.bundleIdentifier else {
             return nil
         }
@@ -69,13 +102,25 @@ final class AppIndex {
             ?? (info?["CFBundleName"] as? String)
             ?? url.deletingPathExtension().lastPathComponent
 
-        let pinyin = Pinyin.convert(name)
+        var names = [name]
+        if let alias = Self.chineseAliases[bundleID], alias != name {
+            names.append(alias)
+        }
+
+        var fulls: [String] = []
+        var initials: [String] = []
+        for candidate in names {
+            let pinyin = Pinyin.convert(candidate)
+            fulls += pinyin.fulls
+            initials += pinyin.initials
+        }
         return AppEntry(name: name, bundleID: bundleID, url: url,
-                        pinyinFulls: pinyin.fulls, pinyinInitials: pinyin.initials)
+                        alternateNames: Array(names.dropFirst()),
+                        pinyinFulls: fulls, pinyinInitials: initials)
     }
 
     /// 精确 > 前缀 > 包含 > 首字母缩写 > 字母子序列
-    func search(_ query: String) -> [AppEntry] {
+    func search(_ query: String, preferred: Set<String> = []) -> [AppEntry] {
         let keyword = query.trimmingCharacters(in: .whitespaces)
         guard !keyword.isEmpty else { return entries }
 
@@ -89,12 +134,38 @@ final class AppIndex {
 
         return scored.sorted {
             if $0.score != $1.score { return $0.score > $1.score }
+            // 同分时，已经开着窗口的应用优先
+            let leftOpen = preferred.contains($0.entry.bundleID)
+            let rightOpen = preferred.contains($1.entry.bundleID)
+            if leftOpen != rightOpen { return leftOpen }
             return $0.order < $1.order
         }.map(\.entry)
     }
 
     private func matchScore(entry: AppEntry, query: String) -> Int? {
-        let lower = entry.name.lowercased()
+        var best: Int?
+        for candidate in [entry.name] + entry.alternateNames {
+            if let score = score(name: candidate, query: query) {
+                best = max(best ?? 0, score)
+            }
+        }
+
+        // 拼音：丰声 -> fs、fengsheng；多音字会有多个变体
+        for variant in entry.pinyinInitials where variant.hasPrefix(query) {
+            best = max(best ?? 0, 850)
+        }
+        for variant in entry.pinyinFulls where variant.hasPrefix(query) {
+            best = max(best ?? 0, 840)
+        }
+        for variant in entry.pinyinFulls where isSubsequence(query, of: variant) {
+            best = max(best ?? 0, 600 + min(variant.count - query.count, 190))
+        }
+        return best
+    }
+
+    /// 单个名字的匹配打分
+    private func score(name: String, query: String) -> Int? {
+        let lower = name.lowercased()
 
         if lower == query { return 1000 }
         if lower.hasPrefix(query) { return 900 }
@@ -102,20 +173,9 @@ final class AppIndex {
             let offset = lower.distance(from: lower.startIndex, to: range.lowerBound)
             return 800 - min(offset, 100)
         }
-        if let result = subsequenceScore(query: query, in: entry.name) {
+        if let result = subsequenceScore(query: query, in: name) {
             // 查询每个字母都落在单词/驼峰边界上，就是首字母缩写
             return result.allBoundary ? 850 : 600 + min(result.score, 190)
-        }
-
-        // 拼音：丰声 -> fs、fengsheng；多音字会有多个变体
-        for variant in entry.pinyinInitials where variant.hasPrefix(query) {
-            return 850
-        }
-        for variant in entry.pinyinFulls where variant.hasPrefix(query) {
-            return 840
-        }
-        for variant in entry.pinyinFulls where isSubsequence(query, of: variant) {
-            return 600 + min(variant.count - query.count, 190)
         }
         return nil
     }

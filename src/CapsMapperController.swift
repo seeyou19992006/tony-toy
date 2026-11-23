@@ -4,6 +4,7 @@ import Cocoa
 final class CapsMapperController {
     private var eventTap: CFMachPort?
     private var isLayerActive = false
+    private var retryCount = 0
     private let capsSrc: Int64 = 0x700000039
     private let f19Dst: Int64 = 0x70000006E
     private let configStore = CapsMappingConfigStore()
@@ -27,7 +28,19 @@ final class CapsMapperController {
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask), callback: { _, type, event, refcon in
             let controller = Unmanaged<CapsMapperController>.fromOpaque(refcon!).takeUnretainedValue()
             return controller.handleEvent(type: type, event: event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
+        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
+            // 辅助功能权限可能还没生效，稍后重试，否则 Caps 层会永久失效
+            retryCount += 1
+            if retryCount <= 10 {
+                fputs("CapsMapper tapCreate failed, retry \(retryCount)\n", stderr)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.start()
+                }
+            }
+            return
+        }
+        retryCount = 0
+        dbg("caps tap created")
         eventTap = tap
         CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
@@ -63,16 +76,13 @@ final class CapsMapperController {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         if keyCode == 80 { // F19
-            if type == .keyDown { isLayerActive = true }
-            else if type == .keyUp { isLayerActive = false }
+            if type == .keyDown { isLayerActive = true; dbg("F19 down") }
+            else if type == .keyUp { isLayerActive = false; dbg("F19 up") }
             return nil
         }
         if isLayerActive {
             if let mapping = mappings[keyCode] {
-                // 启动器面板打开时，Esc 必须交给启动器关闭，不能被映射成 caps_lock
-                if keyCode == 53, LauncherController.shared.isPanelVisible {
-                    return Unmanaged.passUnretained(event)
-                }
+                dbg("caps map keyCode=\(keyCode)")
                 if type == .keyDown { actionExecutor.dispatch(mapping.action) }
                 return nil
             }

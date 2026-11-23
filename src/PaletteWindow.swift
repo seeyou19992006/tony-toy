@@ -13,6 +13,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let tintView = NSView()
 
     private var results: [AppEntry] = []
+    private let pageSize = 8
+    private var currentPage = 0
+    private var selectedIndex = 0
     private var iconCache: [String: NSImage] = [:]
     private var previousApp: NSRunningApplication?
     private var escMonitor: Any?
@@ -31,7 +34,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         self.index = index
         self.onExecute = onExecute
         super.init(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 200),
-                   styleMask: [.borderless, .nonactivatingPanel],
+                   styleMask: [.borderless],
                    backing: .buffered,
                    defer: false)
 
@@ -46,12 +49,18 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         delegate = self
 
         buildUI()
+        installEscMonitor()
+    }
+
+    deinit {
+        removeEscMonitor()
     }
 
     override var canBecomeKey: Bool { true }
 
     /// 焦点不在输入框时，Esc 仍然关闭面板
     override func keyDown(with event: NSEvent) {
+        dbg("palette keyDown keyCode=\(event.keyCode)")
         if event.keyCode == 53 {
             dismiss(restoreFocus: true)
             return
@@ -138,14 +147,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
         refresh()
 
-        // macOS 14+ 用新的 activate()，旧 API ignoringOtherApps 在新系统上已不保证生效
-        if #available(macOS 14.0, *) {
-            NSApp.activate()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // 与密码管理器一致：强制激活，否则 borderless 面板收不到键盘
+        NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
-        installEscMonitor()
 
         // 窗口成为 key 是异步的，必须等下一轮 runloop 再设焦点，否则输入框拿不到键盘事件
         DispatchQueue.main.async { [weak self] in
@@ -166,7 +170,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private func layoutWindow() {
         guard let screen = targetScreen() else { return }
         let visible = screen.visibleFrame
-        let rows = results.isEmpty ? 1 : min(results.count, maxRows)
+        let rows = max(1, pageItems.count)
         let listHeight = CGFloat(rows) * rowHeight
         let height = searchAreaHeight + listHeight + listBottomPadding
 
@@ -230,8 +234,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     private func dismiss(restoreFocus: Bool) {
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
-        // 先拆监听：面板若已不可见会提前返回，残留监听会吞掉后续 Esc
-        removeEscMonitor()
         guard isVisible else { return }
         orderOut(nil)
         if restoreFocus,
@@ -243,11 +245,13 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     /// 应用层兜底：焦点即使不在输入框，Esc 也能关闭面板
+    /// 常驻监听：只在面板可见时拦截 Esc，避免安装/移除与显示时序竞争
     private func installEscMonitor() {
-        removeEscMonitor()
+        guard escMonitor == nil else { return }
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
+            guard let self, self.isVisible else { return event }
             if event.keyCode == 53 {
+                dbg("resident monitor: esc")
                 self.dismiss(restoreFocus: true)
                 return nil
             }
@@ -272,31 +276,46 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     // MARK: - 数据
 
+    private var pageItems: [AppEntry] {
+        let start = currentPage * pageSize
+        let end = min(start + pageSize, results.count)
+        guard start < end else { return [] }
+        return Array(results[start..<end])
+    }
+
     private func refresh() {
-        let keyword = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        let raw = searchField.stringValue
+        let keyword = raw.trimmingCharacters(in: .whitespaces)
+
         windowedBundleIDs = Set(WindowedApps.current().map(\.bundleID))
         runningBundleIDs = Set(WindowedApps.running().map(\.bundleID))
-        if keyword.isEmpty {
-            // 默认结果：有窗口的在前，后台运行的殿后；都没有时退回完整列表
+
+        if raw.isEmpty {
+            // 空输入：有窗口的在前，后台运行的殿后；都没有时退回完整列表
             let defaults = WindowedApps.defaultEntries()
             results = defaults.isEmpty ? index.search("") : defaults
+        } else if keyword.isEmpty {
+            // 只输入空格：列出所有程序，这是默认窗口列表之外查看全部应用的入口
+            results = index.search("")
         } else {
-            results = index.search(keyword)
+            results = index.search(keyword, preferred: windowedBundleIDs)
         }
+        currentPage = 0
+        selectedIndex = 0
         layoutWindow()
         tableView.reloadData()
         guard !results.isEmpty else { return }
         tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        tableView.scrollRowToVisible(0)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        results.count
+        pageItems.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard results.indices.contains(row) else { return nil }
-        let entry = results[row]
+        let items = pageItems
+        guard items.indices.contains(row) else { return nil }
+        let entry = items[row]
         let identifier = NSUserInterfaceItemIdentifier("ResultCell")
 
         let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ResultCell
@@ -342,7 +361,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     private func shortcutLabel(for row: Int) -> String {
         if row == tableView.selectedRow { return "↵" }
-        return row < 9 ? "⌘\(row + 1)" : ""
+        return "⌘\(row + 1)"
     }
 
     private func icon(for entry: AppEntry) -> NSImage {
@@ -381,40 +400,35 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
     }
 
-    /// ⌘1 到 ⌘9 直接执行对应结果
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command),
-           let chars = event.charactersIgnoringModifiers,
-           chars.count == 1,
-           let number = Int(chars),
-           number >= 1, number <= 9 {
-            executeRow(number - 1)
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
-    }
-
     private func moveSelection(by delta: Int) {
         guard !results.isEmpty else { return }
-        let current = tableView.selectedRow
-        let base = current < 0 ? 0 : current
-        // 首尾环绕：第一条再往上跳到最后一条，最后一条往下回到第一条
-        var next = base + delta
+        // 首尾环绕
+        var next = selectedIndex + delta
         if next < 0 { next = results.count - 1 }
         if next >= results.count { next = 0 }
-        tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
-        tableView.scrollRowToVisible(next)
+        selectedIndex = next
+
+        // 固定翻页：选中项换页时整页切换，而不是平滑滚动
+        let targetPage = next / pageSize
+        if targetPage != currentPage {
+            currentPage = targetPage
+            layoutWindow()
+            tableView.reloadData()
+        }
+        tableView.selectRowIndexes(IndexSet(integer: next % pageSize), byExtendingSelection: false)
     }
 
-    private func executeRow(_ index: Int) {
-        guard results.indices.contains(index) else { return }
-        let entry = results[index]
+    /// 页内第几条
+    private func executePageRow(_ row: Int) {
+        let items = pageItems
+        guard items.indices.contains(row) else { return }
+        let entry = items[row]
         dismiss(restoreFocus: false)
         onExecute(entry)
     }
 
     @objc private func executeSelected() {
-        executeRow(tableView.selectedRow)
+        executePageRow(tableView.selectedRow)
     }
 }
 

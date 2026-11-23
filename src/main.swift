@@ -5,6 +5,18 @@ import Carbon
 // 全局变量用于 Carbon 回调
 weak var _PasswordManagerSharedSelf: AppDelegate?
 
+// 调试用：跑一次搜索并打印结果
+if let flag = CommandLine.arguments.firstIndex(of: "--search"),
+   flag + 1 < CommandLine.arguments.count {
+    let index = AppIndex()
+    index.scan()
+    print("索引总数: \(index.entries.count)")
+    for entry in index.search(CommandLine.arguments[flag + 1]).prefix(10) {
+        print("  \(entry.name)  \(entry.bundleID)")
+    }
+    exit(0)
+}
+
 // 调试用：按 bundle id 激活应用（走完整 Activator 逻辑）
 if let flag = CommandLine.arguments.firstIndex(of: "--open"),
    flag + 1 < CommandLine.arguments.count,
