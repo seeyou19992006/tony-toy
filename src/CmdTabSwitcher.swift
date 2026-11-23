@@ -14,6 +14,11 @@ final class CmdTabSwitcher {
     private let rightKeyCode: Int64 = 124
     private let downKeyCode: Int64 = 125
     private let upKeyCode: Int64 = 126
+    // 字母导航：E 上、D 下、S 左、F 右
+    private let eKeyCode: Int64 = 14
+    private let dKeyCode: Int64 = 2
+    private let sKeyCode: Int64 = 1
+    private let fKeyCode: Int64 = 3
 
     func start() {
         stop()
@@ -89,7 +94,7 @@ final class CmdTabSwitcher {
             return Unmanaged.passUnretained(event)
         }
 
-        // 按住 ⌘ 期间的导航按键：全部吞掉，避免落到系统产生提示音
+        // 按住 ⌘ 期间：方向键或 E/D/S/F 导航，全部吞掉避免提示音
         if type == .keyDown, isActive {
             switch keyCode {
             case escKeyCode:
@@ -100,20 +105,21 @@ final class CmdTabSwitcher {
                 isActive = false
                 DispatchQueue.main.async { SwitcherController.shared.commit() }
                 return nil
-            case leftKeyCode:
+            case leftKeyCode, sKeyCode:
                 DispatchQueue.main.async { SwitcherController.shared.moveHorizontal(by: -1) }
                 return nil
-            case rightKeyCode:
+            case rightKeyCode, fKeyCode:
                 DispatchQueue.main.async { SwitcherController.shared.moveHorizontal(by: 1) }
                 return nil
-            case upKeyCode:
+            case upKeyCode, eKeyCode:
                 DispatchQueue.main.async { SwitcherController.shared.moveVertical(by: -1) }
                 return nil
-            case downKeyCode:
+            case downKeyCode, dKeyCode:
                 DispatchQueue.main.async { SwitcherController.shared.moveVertical(by: 1) }
                 return nil
             default:
-                return nil
+                // 其它按键放行，交给 Caps 层映射（Caps+E/D/S/F → 方向键）
+                break
             }
         }
 
