@@ -42,7 +42,7 @@ final class SwitcherTile: NSView {
 
     override func layout() {
         super.layout()
-        highlight.frame = bounds
+        highlight.frame = bounds.insetBy(dx: 6, dy: 6)
         let iconSide: CGFloat = 80
         iconView.frame = NSRect(x: (bounds.width - iconSide) / 2,
                                 y: bounds.height - iconSide - 22,
@@ -87,6 +87,7 @@ final class SwitcherWindow: NSPanel {
     private let cellHeight: CGFloat = 134
     private let padding: CGFloat = 20
     private let headerHeight: CGFloat = 46
+    private let gridGap: CGFloat = 12
 
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -172,7 +173,7 @@ final class SwitcherWindow: NSPanel {
     private func layoutWindow() {
         let width = CGFloat(cols) * cellWidth + padding * 2
         let gridHeight = CGFloat(rows) * cellHeight
-        let height = headerHeight + gridHeight + padding * 2
+        let height = headerHeight + gridGap + gridHeight + padding * 2
 
         let screen = targetScreen()
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -195,8 +196,9 @@ final class SwitcherWindow: NSPanel {
             let row = index / cols
             let column = index % cols
             let x = padding + CGFloat(column) * cellWidth
-            // 首行紧贴标题栏下方
-            let y = height - headerHeight - padding - CGFloat(row + 1) * cellHeight + padding
+            // 网格顶部与标题栏之间留出 gridGap
+            let gridTop = height - headerHeight - gridGap
+            let y = gridTop - CGFloat(row + 1) * cellHeight
             tile.frame = NSRect(x: x, y: y, width: cellWidth, height: cellHeight)
         }
     }
