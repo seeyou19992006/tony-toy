@@ -211,7 +211,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // 使用全局变量避免闭包捕获
             _PasswordManagerSharedSelf = self
 
-            let handler: EventHandlerUPP = { _, _, _ in
+            let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
+                guard let event else { return OSStatus(eventNotHandledErr) }
+
+                // 与启动器共用事件分发目标，只响应 PwdM 这一个热键
+                var identifier = EventHotKeyID()
+                let readStatus = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                                   EventParamType(typeEventHotKeyID), nil,
+                                                   MemoryLayout<EventHotKeyID>.size, nil, &identifier)
+                guard readStatus == noErr,
+                      identifier.signature == 1953390948,  // 'PwdM'
+                      identifier.id == 1 else {
+                    return OSStatus(eventNotHandledErr)
+                }
+
                 DispatchQueue.main.async {
                     _PasswordManagerSharedSelf?.showPasswordManager()
                 }

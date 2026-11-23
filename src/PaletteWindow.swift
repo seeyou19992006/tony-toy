@@ -138,11 +138,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         }
         refresh()
 
-        if #available(macOS 14.0, *) {
-            NSApp.activate()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // 热键唤起的窗口必须强制激活，否则 key window 收不到键盘事件
+        NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         installEscMonitor()
 
@@ -194,8 +191,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     private func dismiss(restoreFocus: Bool) {
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
-        guard isVisible else { return }
+        // 先拆监听：面板若已不可见会提前返回，残留监听会吞掉后续 Esc
         removeEscMonitor()
+        guard isVisible else { return }
         orderOut(nil)
         if restoreFocus,
            let previous = previousApp,

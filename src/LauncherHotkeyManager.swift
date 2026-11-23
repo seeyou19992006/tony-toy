@@ -3,7 +3,8 @@ import Cocoa
 
 /// 用 Carbon 注册系统级热键，不依赖辅助功能权限
 final class LauncherHotkeyManager {
-    private static let signature: OSType = 0x4C4E4348 // 'LNCH'
+    static let signature: OSType = 0x4C4E4348 // 'LNCH'
+    static let hotKeyID: UInt32 = 1
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
@@ -30,8 +31,20 @@ final class LauncherHotkeyManager {
                                       eventKind: UInt32(kEventHotKeyPressed))
         let selfPointer = Unmanaged.passUnretained(self).toOpaque()
 
-        let handler: EventHandlerUPP = { _, _, userData -> OSStatus in
-            guard let userData else { return OSStatus(eventNotHandledErr) }
+        let handler: EventHandlerUPP = { _, event, userData -> OSStatus in
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
+
+            // 事件分发目标会被多个热键共享，必须确认是自己的那个才处理
+            var identifier = EventHotKeyID()
+            let readStatus = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                               EventParamType(typeEventHotKeyID), nil,
+                                               MemoryLayout<EventHotKeyID>.size, nil, &identifier)
+            guard readStatus == noErr,
+                  identifier.signature == LauncherHotkeyManager.signature,
+                  identifier.id == LauncherHotkeyManager.hotKeyID else {
+                return OSStatus(eventNotHandledErr)
+            }
+
             let manager = Unmanaged<LauncherHotkeyManager>.fromOpaque(userData).takeUnretainedValue()
             DispatchQueue.main.async {
                 manager.trigger?()
