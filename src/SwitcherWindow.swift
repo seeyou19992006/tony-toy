@@ -115,7 +115,8 @@ final class SwitcherWindow: NSPanel {
         guard !items.isEmpty else { return }
 
         (rows, cols) = Self.grid(for: items.count)
-        selected = 0
+        // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
+        selected = items.count > 1 ? 1 : 0
 
         rebuildTiles()
         layoutWindow()
