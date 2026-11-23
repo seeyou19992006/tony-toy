@@ -12,39 +12,47 @@ enum WindowEnumerator {
     static func standardWindows(of pid: pid_t) -> [SwitchWindowInfo] {
         let app = AXUIElementCreateApplication(pid)
 
+        // 某个应用无响应时不要卡住整个切换器
+        AXUIElementSetMessagingTimeout(app, 0.25)
+
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let list = value as? [AXUIElement] else {
             return []
         }
 
-        return list.compactMap { element in
+        // 一次调用取回全部属性：逐个属性取会多出 4 倍 IPC 往返
+        let attributes = [kAXSubroleAttribute, kAXTitleAttribute,
+                          kAXMinimizedAttribute, kAXSizeAttribute] as [String]
+
+        var result: [SwitchWindowInfo] = []
+        result.reserveCapacity(list.count)
+
+        for element in list {
+            var values: CFArray?
+            guard AXUIElementCopyMultipleAttributeValues(element, attributes as CFArray, [], &values) == .success,
+                  let array = values as? [Any],
+                  array.count == 4 else { continue }
+
             // 只保留标准窗口，排除面板、提示框、工具栏这类
-            var subroleValue: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleValue)
-            guard let subrole = subroleValue as? String,
-                  subrole == kAXStandardWindowSubrole else { return nil }
+            guard let subrole = array[0] as? String,
+                  subrole == kAXStandardWindowSubrole else { continue }
 
             // 跳过尺寸为零的隐藏窗口
-            var sizeValue: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
             var size = CGSize.zero
-            if let sizeValue {
-                AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+            if CFGetTypeID(array[3] as CFTypeRef) == AXValueGetTypeID() {
+                AXValueGetValue(array[3] as! AXValue, .cgSize, &size)
             }
-            guard size.width > 1, size.height > 1 else { return nil }
+            guard size.width > 1, size.height > 1 else { continue }
 
-            var titleValue: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleValue)
-            let rawTitle = (titleValue as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rawTitle = (array[1] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let minimized = (array[2] as? Bool) ?? false
 
-            var minimizedValue: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimizedValue)
-            let minimized = (minimizedValue as? Bool) ?? false
-
-            return SwitchWindowInfo(element: element,
-                                    title: rawTitle.isEmpty ? "未命名窗口" : rawTitle,
-                                    minimized: minimized)
+            result.append(SwitchWindowInfo(element: element,
+                                           title: rawTitle.isEmpty ? "未命名窗口" : rawTitle,
+                                           minimized: minimized))
         }
+
+        return result
     }
 }

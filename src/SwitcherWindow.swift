@@ -19,8 +19,8 @@ final class SwitcherTile: NSView {
         addSubview(highlight)
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        // 没有窗口的应用：图标去色 + 半透明
-        iconView.image = item.hasWindow ? icon : Self.desaturated(icon)
+        // 没有窗口的应用：图标去色 + 半透明（缓存里已含去色版本）
+        iconView.image = icon
         iconView.alphaValue = item.hasWindow ? 1.0 : 0.45
         addSubview(iconView)
 
@@ -55,19 +55,8 @@ final class SwitcherTile: NSView {
         nameLabel.textColor = NSColor.white.withAlphaComponent(isSelected ? 1 : 0.85)
     }
 
-    /// 去色 + 半透明，表示该应用没有打开的窗口
-    private static func desaturated(_ image: NSImage) -> NSImage {
-        guard let tiff = image.tiffRepresentation,
-              let ci = CIImage(data: tiff),
-              let filter = CIFilter(name: "CIColorControls") else { return image }
-        filter.setValue(ci, forKey: kCIInputImageKey)
-        filter.setValue(0, forKey: kCIInputSaturationKey)
-        guard let output = filter.outputImage else { return image }
-        let result = NSImage(size: image.size)
-        result.addRepresentation(NSCIImageRep(ciImage: output))
-        return result
-    }
 }
+
 
 /// 单个显示器上的切换器面板（纯渲染，状态由 SwitcherController 持有）
 final class SwitcherWindow: NSPanel {
@@ -160,9 +149,7 @@ final class SwitcherWindow: NSPanel {
     private func rebuildTiles() {
         tiles.forEach { $0.removeFromSuperview() }
         tiles = items.map { item in
-            let icon = NSWorkspace.shared.icon(forFile: item.entry.url.path)
-            icon.size = NSSize(width: 96, height: 96)
-            return SwitcherTile(item: item, icon: icon)
+            SwitcherTile(item: item, icon: IconCache.icon(for: item.entry, gray: !item.hasWindow))
         }
         tiles.forEach { background.addSubview($0) }
     }
