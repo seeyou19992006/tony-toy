@@ -250,11 +250,34 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         guard escMonitor == nil else { return }
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isVisible else { return event }
+
             if event.keyCode == 53 {
                 dbg("resident monitor: esc")
                 self.dismiss(restoreFocus: true)
                 return nil
             }
+
+            // ⌘1-⌘8 页内快速执行
+            if event.modifierFlags.contains(.command),
+               let chars = event.charactersIgnoringModifiers,
+               chars.count == 1,
+               let number = Int(chars), number >= 1, number <= self.pageSize {
+                self.executePageRow(number - 1)
+                return nil
+            }
+
+            // 左右键：光标还能动就交给输入框，到两端后翻页
+            if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                if event.keyCode == 123, self.atStartOfInput() {
+                    self.changePage(by: -1)
+                    return nil
+                }
+                if event.keyCode == 124, self.atEndOfInput() {
+                    self.changePage(by: 1)
+                    return nil
+                }
+            }
+
             return event
         }
     }
