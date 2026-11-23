@@ -25,8 +25,33 @@ final class Activator {
                 guard let self, !self.hasVisibleWindows(pid: running.processIdentifier) else { return }
                 running.activate(options: [.activateIgnoringOtherApps])
                 self.sendNewWindowShortcut(pid: running.processIdentifier)
+
+                // 新窗口由目标应用异步创建，建好后要再激活一次并把焦点给到窗口
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    guard let self else { return }
+                    running.activate(options: [.activateIgnoringOtherApps])
+                    self.focusFrontWindow(of: running.processIdentifier)
+                }
             }
         }
+    }
+
+    /// 把键盘焦点显式给到该应用最前面的窗口
+    private func focusFrontWindow(of pid: pid_t) {
+        guard AXIsProcessTrusted() else { return }
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, 0.25)
+
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement],
+              let front = windows.first else { return }
+
+        // 未最小化 + 设为主窗口 + 抬升，三步都要，否则只是画出来但没焦点
+        AXUIElementSetAttributeValue(front, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        AXUIElementSetAttributeValue(axApp, kAXMainWindowAttribute as CFString, front)
+        AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, front)
+        AXUIElementPerformAction(front, kAXRaiseAction as CFString)
     }
 
     /// 给目标应用发 ⌘N，让有文档模型的应用自己开一个窗口
