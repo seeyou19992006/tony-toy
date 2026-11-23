@@ -25,8 +25,10 @@ final class SwitcherTile: NSView {
         nameLabel.font = .systemFont(ofSize: 11.5)
         nameLabel.textColor = .white
         nameLabel.alignment = .center
-        // 没有窗口的应用：图标去色压暗，一眼区分
+        // 没有窗口的应用：图标去色压暗并半透明，一眼区分
         iconView.image = item.hasWindow ? icon : Self.desaturated(icon)
+        iconView.alphaValue = item.hasWindow ? 1.0 : 0.42
+        nameLabel.alphaValue = item.hasWindow ? 1.0 : 0.7
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.textColor = .white
         nameLabel.alignment = .center
@@ -56,7 +58,7 @@ final class SwitcherTile: NSView {
               let filter = CIFilter(name: "CIColorControls") else { return image }
         filter.setValue(ci, forKey: kCIInputImageKey)
         filter.setValue(0, forKey: kCIInputSaturationKey)
-        filter.setValue(-0.18, forKey: kCIInputBrightnessKey)
+        filter.setValue(-0.3, forKey: kCIInputBrightnessKey)
         guard let output = filter.outputImage else { return image }
         let result = NSImage(size: image.size)
         result.addRepresentation(NSCIImageRep(ciImage: output))
