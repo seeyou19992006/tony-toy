@@ -49,7 +49,8 @@ enum IconCache {
                                       bitsPerComponent: 8,
                                       bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceGray(),
-                                      bitmapInfo: CGImageAlphaInfo.none.rawValue),
+                                      // 必须带 alpha：none 会把图标圆角外的透明区域画成黑色
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return image
         }
