@@ -10,6 +10,10 @@ final class CmdTabSwitcher {
     private let tabKeyCode: Int64 = 48
     private let escKeyCode: Int64 = 53
     private let returnKeyCode: Int64 = 36
+    private let leftKeyCode: Int64 = 123
+    private let rightKeyCode: Int64 = 124
+    private let downKeyCode: Int64 = 125
+    private let upKeyCode: Int64 = 126
 
     func start() {
         stop()
@@ -66,11 +70,11 @@ final class CmdTabSwitcher {
             if !isActive {
                 isActive = true
                 DispatchQueue.main.async {
-                    LauncherController.shared.beginSwitcher()
+                    SwitcherController.shared.show()
                 }
             } else {
                 DispatchQueue.main.async {
-                    LauncherController.shared.moveSwitcherSelection(by: backward ? -1 : 1)
+                    SwitcherController.shared.moveSequential(by: backward ? -1 : 1)
                 }
             }
             return nil
@@ -80,7 +84,7 @@ final class CmdTabSwitcher {
         if type == .flagsChanged, isActive, !flags.contains(.maskCommand) {
             isActive = false
             DispatchQueue.main.async {
-                LauncherController.shared.commitSwitcher()
+                SwitcherController.shared.commit()
             }
             return Unmanaged.passUnretained(event)
         }
