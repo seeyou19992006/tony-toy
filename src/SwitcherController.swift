@@ -18,6 +18,28 @@ struct SwitcherItem {
         guard let windowTitle, windowTitle != entry.name else { return entry.name }
         return "\(entry.name) — \(windowTitle)"
     }
+
+    /// 去掉窗口标题里重复的应用名。
+    /// Chrome 这类浏览器会在标题末尾追加「 - Google Chrome」，顶部标题栏又加了一次应用名。
+    static func sanitize(title: String, appName: String) -> String {
+        var result = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        for separator in [" - ", " — ", " – ", " | "] {
+            let suffix = separator + appName
+            if result.hasSuffix(suffix) {
+                result = String(result.dropLast(suffix.count))
+                break
+            }
+            let prefix = appName + separator
+            if result.hasPrefix(prefix) {
+                result = String(result.dropFirst(prefix.count))
+                break
+            }
+        }
+
+        result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? appName : result
+    }
 }
 
 /// ⌘Tab 切换器：独立的二维网格窗口
@@ -109,12 +131,14 @@ final class SwitcherController {
             if windows.count > 1 {
                 // 平铺：每个窗口一个磁贴
                 for info in windows {
+                    let title = SwitcherItem.sanitize(title: info.title, appName: entry.name)
                     items.append(SwitcherItem(entry: entry, window: info.element,
-                                              windowTitle: info.title, hasWindow: true))
+                                              windowTitle: title, hasWindow: true))
                 }
             } else if let info = windows.first {
+                let title = SwitcherItem.sanitize(title: info.title, appName: entry.name)
                 items.append(SwitcherItem(entry: entry, window: info.element,
-                                          windowTitle: info.title, hasWindow: true))
+                                          windowTitle: title, hasWindow: true))
             } else {
                 items.append(SwitcherItem(entry: entry, window: nil,
                                           windowTitle: nil, hasWindow: false))
