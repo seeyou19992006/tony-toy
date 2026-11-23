@@ -15,6 +15,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var results: [AppEntry] = []
     private var iconCache: [String: NSImage] = [:]
     private var previousApp: NSRunningApplication?
+    private var escMonitor: Any?
     private var windowedBundleIDs = Set<String>()
     private var runningBundleIDs = Set<String>()
 
@@ -143,6 +144,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             NSApp.activate(ignoringOtherApps: true)
         }
         makeKeyAndOrderFront(nil)
+        installEscMonitor()
 
         // 窗口成为 key 是异步的，必须等下一轮 runloop 再设焦点，否则输入框拿不到键盘事件
         DispatchQueue.main.async { [weak self] in
@@ -193,6 +195,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private func dismiss(restoreFocus: Bool) {
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
         guard isVisible else { return }
+        removeEscMonitor()
         orderOut(nil)
         if restoreFocus,
            let previous = previousApp,
@@ -200,6 +203,26 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             previous.activate(options: [.activateIgnoringOtherApps])
         }
         previousApp = nil
+    }
+
+    /// 应用层兜底：焦点即使不在输入框，Esc 也能关闭面板
+    private func installEscMonitor() {
+        removeEscMonitor()
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 {
+                self.dismiss(restoreFocus: true)
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeEscMonitor() {
+        if let monitor = escMonitor {
+            NSEvent.removeMonitor(monitor)
+            escMonitor = nil
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
