@@ -1,6 +1,26 @@
-import Cocoa
+import AppKit
+import ApplicationServices
 
-/// ⌘Tab 切换器：独立的二维网格窗口，只显示正在运行、有界面的应用
+/// 切换器里的一项：应用本身，或它的某一个窗口
+struct SwitcherItem {
+    let entry: AppEntry
+    let window: AXUIElement?
+    let windowTitle: String?
+    let hasWindow: Bool
+
+    /// 磁贴下的小字
+    var displayTitle: String {
+        windowTitle ?? entry.name
+    }
+
+    /// 顶部标题栏：应用名 + 窗口标题
+    var fullTitle: String {
+        guard let windowTitle, windowTitle != entry.name else { return entry.name }
+        return "\(entry.name) — \(windowTitle)"
+    }
+}
+
+/// ⌘Tab 切换器：独立的二维网格窗口
 final class SwitcherController {
     static let shared = SwitcherController()
 
@@ -15,7 +35,7 @@ final class SwitcherController {
     }
 
     func show() {
-        let items = Self.runningEntries()
+        let items = Self.buildItems()
         guard !items.isEmpty else { return }
         isShown = true
         window.show(items: items)
@@ -43,8 +63,20 @@ final class SwitcherController {
         let target = window.current
         isShown = false
         window.hide()
-        if let target {
-            activator.activate(target)
+        guard let target else { return }
+
+        // 先激活应用，再抬升具体窗口
+        if let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: target.entry.bundleID).first {
+            running.activate(options: [.activateIgnoringOtherApps])
+        } else {
+            activator.activate(target.entry)
+        }
+
+        guard let element = target.window else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         }
     }
 
@@ -54,13 +86,41 @@ final class SwitcherController {
         window.hide()
     }
 
-    /// 正在运行且有界面的应用，按窗口层级（最近使用）优先
-    private static func runningEntries() -> [AppEntry] {
+    /// 正在运行的应用；多窗口应用展开成多个窗口项
+    private static func buildItems() -> [SwitcherItem] {
         let windowed = WindowedApps.current()
         let windowedIDs = Set(windowed.map(\.bundleID))
         let background = WindowedApps.running()
             .filter { !windowedIDs.contains($0.bundleID) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        return windowed + background
+
+        var items: [SwitcherItem] = []
+
+        for entry in windowed + background {
+            guard let app = NSRunningApplication
+                .runningApplications(withBundleIdentifier: entry.bundleID).first else {
+                items.append(SwitcherItem(entry: entry, window: nil,
+                                          windowTitle: nil, hasWindow: false))
+                continue
+            }
+
+            let windows = WindowEnumerator.standardWindows(of: app.processIdentifier)
+
+            if windows.count > 1 {
+                // 平铺：每个窗口一个磁贴
+                for info in windows {
+                    items.append(SwitcherItem(entry: entry, window: info.element,
+                                              windowTitle: info.title, hasWindow: true))
+                }
+            } else if let info = windows.first {
+                items.append(SwitcherItem(entry: entry, window: info.element,
+                                          windowTitle: info.title, hasWindow: true))
+            } else {
+                items.append(SwitcherItem(entry: entry, window: nil,
+                                          windowTitle: nil, hasWindow: false))
+            }
+        }
+
+        return items
     }
 }

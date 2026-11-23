@@ -1,6 +1,6 @@
 import Cocoa
 
-/// 单个应用磁贴：图标 + 名称
+/// 单个磁贴：图标 + 窗口标题 + 窗口角标
 final class SwitcherTile: NSView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
@@ -11,34 +11,35 @@ final class SwitcherTile: NSView {
         didSet { updateHighlight() }
     }
 
-    init(entry: AppEntry, icon: NSImage, hasWindow: Bool) {
+    init(item: SwitcherItem, icon: NSImage) {
         super.init(frame: .zero)
 
         highlight.wantsLayer = true
         highlight.layer?.cornerRadius = 10
-        highlight.layer?.backgroundColor = NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1).cgColor
         addSubview(highlight)
 
         iconView.image = icon
         iconView.imageScaling = .scaleProportionallyUpOrDown
         addSubview(iconView)
 
-        nameLabel.stringValue = entry.name
+        nameLabel.stringValue = item.displayTitle
         nameLabel.font = .systemFont(ofSize: 11.5)
         nameLabel.textColor = .white
         nameLabel.alignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
-        // 角标：绿点=有窗口，灰点=后台运行
+        // 角标：绿点=有窗口，灰点=仅后台运行
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 5
         badge.layer?.borderWidth = 2
         badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
-        badge.layer?.backgroundColor = (hasWindow
+        badge.layer?.backgroundColor = (item.hasWindow
             ? NSColor.systemGreen
             : NSColor(white: 0.62, alpha: 1)).cgColor
         addSubview(badge)
+
+        updateHighlight()
     }
 
     required init?(coder: NSCoder) {
@@ -48,9 +49,9 @@ final class SwitcherTile: NSView {
     override func layout() {
         super.layout()
         highlight.frame = bounds
-        let iconSide: CGFloat = 56
+        let iconSide: CGFloat = 52
         iconView.frame = NSRect(x: (bounds.width - iconSide) / 2,
-                                y: bounds.height - iconSide - 20,
+                                y: bounds.height - iconSide - 22,
                                 width: iconSide, height: iconSide)
         nameLabel.frame = NSRect(x: 4, y: 6, width: bounds.width - 8, height: 16)
         badge.frame = NSRect(x: iconView.frame.maxX - 12, y: iconView.frame.maxY - 12,
@@ -61,6 +62,7 @@ final class SwitcherTile: NSView {
         highlight.layer?.backgroundColor = isSelected
             ? NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1).cgColor
             : NSColor.clear.cgColor
+        nameLabel.textColor = NSColor.white.withAlphaComponent(isSelected ? 1 : 0.85)
     }
 }
 
@@ -68,9 +70,10 @@ final class SwitcherTile: NSView {
 final class SwitcherWindow: NSPanel {
     private let background = NSVisualEffectView()
     private let tintView = NSView()
+    private let headerLabel = NSTextField(labelWithString: "")
     private var tiles: [SwitcherTile] = []
 
-    private var items: [AppEntry] = []
+    private var items: [SwitcherItem] = []
     private var selected = 0
     private var rows = 1
     private var cols = 1
@@ -78,6 +81,7 @@ final class SwitcherWindow: NSPanel {
     private let cellWidth: CGFloat = 104
     private let cellHeight: CGFloat = 100
     private let padding: CGFloat = 20
+    private let headerHeight: CGFloat = 46
 
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -103,6 +107,18 @@ final class SwitcherWindow: NSPanel {
         tintView.wantsLayer = true
         tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.88).cgColor
         background.addSubview(tintView)
+
+        // 顶部标题栏：显示当前选中项的完整标题
+        headerLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        headerLabel.textColor = .white
+        headerLabel.lineBreakMode = .byTruncatingMiddle
+        headerLabel.alignment = .center
+        background.addSubview(headerLabel)
+
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.identifier = NSUserInterfaceItemIdentifier("headerSeparator")
+        background.addSubview(separator)
     }
 
     override var canBecomeKey: Bool { true }
@@ -110,7 +126,7 @@ final class SwitcherWindow: NSPanel {
 
     // MARK: - 展示
 
-    func show(items: [AppEntry]) {
+    func show(items: [SwitcherItem]) {
         self.items = items
         guard !items.isEmpty else { return }
 
@@ -120,6 +136,7 @@ final class SwitcherWindow: NSPanel {
 
         rebuildTiles()
         layoutWindow()
+        applySelection()
         orderFrontRegardless()
     }
 
@@ -127,7 +144,7 @@ final class SwitcherWindow: NSPanel {
         orderOut(nil)
     }
 
-    /// 竖向 x 行、横向 x+2 列，取最小的 x 容纳全部图标
+    /// 竖向 x 行、横向 x+2 列，取最小的 x 容纳全部磁贴
     static func grid(for count: Int) -> (rows: Int, cols: Int) {
         guard count > 0 else { return (1, 3) }
         var x = 1
@@ -137,20 +154,18 @@ final class SwitcherWindow: NSPanel {
 
     private func rebuildTiles() {
         tiles.forEach { $0.removeFromSuperview() }
-        let windowedIDs = Set(WindowedApps.current().map(\.bundleID))
-        tiles = items.map { entry in
-            let icon = NSWorkspace.shared.icon(forFile: entry.url.path)
-            icon.size = NSSize(width: 56, height: 56)
-            return SwitcherTile(entry: entry, icon: icon,
-                               hasWindow: windowedIDs.contains(entry.bundleID))
+        tiles = items.map { item in
+            let icon = NSWorkspace.shared.icon(forFile: item.entry.url.path)
+            icon.size = NSSize(width: 52, height: 52)
+            return SwitcherTile(item: item, icon: icon)
         }
         tiles.forEach { background.addSubview($0) }
-        applySelection()
     }
 
     private func layoutWindow() {
         let width = CGFloat(cols) * cellWidth + padding * 2
-        let height = CGFloat(rows) * cellHeight + padding * 2
+        let gridHeight = CGFloat(rows) * cellHeight
+        let height = headerHeight + gridHeight + padding * 2
 
         let screen = targetScreen()
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -160,12 +175,21 @@ final class SwitcherWindow: NSPanel {
         background.frame = NSRect(origin: .zero, size: NSSize(width: width, height: height))
         tintView.frame = background.bounds
 
+        headerLabel.frame = NSRect(x: padding, y: height - headerHeight + 12,
+                                   width: width - padding * 2, height: 22)
+        if let separator = background.subviews.first(where: {
+            $0.identifier?.rawValue == "headerSeparator"
+        }) {
+            separator.frame = NSRect(x: padding, y: height - headerHeight,
+                                     width: width - padding * 2, height: 1)
+        }
+
         for (index, tile) in tiles.enumerated() {
             let row = index / cols
             let column = index % cols
             let x = padding + CGFloat(column) * cellWidth
-            // 首行在最上方
-            let y = height - padding - CGFloat(row + 1) * cellHeight
+            // 首行紧贴标题栏下方
+            let y = height - headerHeight - padding - CGFloat(row + 1) * cellHeight + padding
             tile.frame = NSRect(x: x, y: y, width: cellWidth, height: cellHeight)
         }
     }
@@ -184,9 +208,12 @@ final class SwitcherWindow: NSPanel {
         for (index, tile) in tiles.enumerated() {
             tile.isSelected = index == selected
         }
+        if items.indices.contains(selected) {
+            headerLabel.stringValue = items[selected].fullTitle
+        }
     }
 
-    var current: AppEntry? {
+    var current: SwitcherItem? {
         items.indices.contains(selected) ? items[selected] : nil
     }
 
@@ -197,7 +224,6 @@ final class SwitcherWindow: NSPanel {
         let column = selected % cols
         let newColumn = (column + delta + cols) % cols
         let candidate = row * cols + newColumn
-        // 最后一行可能不满，越界就退回原位置
         selected = candidate < items.count ? candidate : selected
         applySelection()
     }
@@ -212,7 +238,6 @@ final class SwitcherWindow: NSPanel {
             if candidate >= 0 {
                 selected = candidate
             } else {
-                // 往上越界：落到该列最后一个存在的格子
                 guard column < items.count else { return }
                 let lastRow = (items.count - 1 - column) / cols
                 selected = lastRow * cols + column
@@ -222,7 +247,6 @@ final class SwitcherWindow: NSPanel {
             if candidate < items.count {
                 selected = candidate
             } else {
-                // 往下越界：回到第一行的同一列
                 selected = column < items.count ? column : 0
             }
         }
