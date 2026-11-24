@@ -1,5 +1,14 @@
 import AppKit
 
+/// 翻转坐标系的文档视图：滚动内容从顶部开始排列。
+///
+/// NSView 默认 y=0 在底部，非翻转的 documentView 又总是贴在滚动视图底部，
+/// 结果是内容短于窗口时整块贴到窗口底边（实测 Pane 文案出现在底部）。
+/// 翻转后内容从顶部开始，内容变长时也正好从第一行开始滚动。
+private final class FlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// 配置窗口右侧分区的基类。
 ///
 /// 子类在 `viewDidLoad` 里往 `contentStack` 添加行。
@@ -42,7 +51,8 @@ class SettingsPaneViewController: NSViewController {
 
         // NSScrollView 的 documentView 需要有明确尺寸，
         // 用容器 + 四边约束把 contentStack 撑开，滚动范围才正确。
-        let documentView = NSView()
+        // 容器必须翻转（见 FlippedDocumentView），否则内容会贴底。
+        let documentView = FlippedDocumentView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(contentStack)
         scrollView.documentView = documentView
