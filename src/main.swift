@@ -3,7 +3,6 @@ import Cocoa
 import Carbon
 
 // 全局变量用于 Carbon 回调
-weak var _PasswordManagerSharedSelf: AppDelegate?
 
 // 调试用：跑一次搜索并打印结果
 if let flag = CommandLine.arguments.firstIndex(of: "--search"),
@@ -77,7 +76,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 配置窗口。用 lazy 是为了不在启动时创建整套 AppKit 视图——
     /// 大多数用户一次也不会打开设置，没必要为此拖慢冷启动。
     private lazy var settingsWindowController = SettingsWindowController()
-    private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
+
+    /// 密码管理器的全局热键。⌘⇧V 写死是刻意的——
+    /// 配置项还在规划中，改键位前先保持既有行为。
+    private let passwordHotkey = CarbonHotkey(
+        name: "密码管理器", signature: OSType.fourCharCode("TnyP"))
 
     // MARK: - 功能访问
 
@@ -179,7 +182,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 7. 密码管理器的全局热键（Carbon，与 Feature 的启停无关）
-        registerPasswordManagerHotkey()
+        //    ⌘⇧V：keyCode 9 是 V 键
+        passwordHotkey.onTrigger = { [weak self] in
+            self?.showPasswordManager()
+        }
+        passwordHotkey.register(
+            keyCode: 9, modifiers: UInt32(cmdKey) | UInt32(shiftKey))
 
         // 8. 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()
@@ -199,6 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // 确保退出时注销所有 tap、释放资源
         featureRegistry.stopAll()
+        passwordHotkey.unregister()
     }
 
     private func checkAccessibility() {
@@ -341,59 +350,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func registerPasswordManagerHotkey() {
-        // 防止重复安装 handler
-        guard !isHotkeyHandlerInstalled else { return }
-        isHotkeyHandlerInstalled = true
-
-        // 使用 Carbon 注册全局快捷键
-        var hotKeyRef: EventHotKeyRef?
-        let modifierKeys: UInt32 = UInt32(cmdKey) | UInt32(shiftKey)
-        let keyCode: UInt32 = 9  // V 键
-
-        var spec = EventHotKeyID()
-        spec.signature = 1953390948  // 'PwdM'
-        spec.id = 1
-
-        let status = RegisterEventHotKey(
-            keyCode,
-            modifierKeys,
-            spec,
-            GetEventDispatcherTarget(),
-            0,
-            &hotKeyRef
-        )
-
-        if status == noErr {
-            // 使用全局变量避免闭包捕获
-            _PasswordManagerSharedSelf = self
-
-            let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
-                guard let event else { return OSStatus(eventNotHandledErr) }
-
-                // 与启动器共用事件分发目标，只响应 PwdM 这一个热键
-                var identifier = EventHotKeyID()
-                let readStatus = GetEventParameter(event, EventParamName(kEventParamDirectObject),
-                                                   EventParamType(typeEventHotKeyID), nil,
-                                                   MemoryLayout<EventHotKeyID>.size, nil, &identifier)
-                guard readStatus == noErr,
-                      identifier.signature == 1953390948,  // 'PwdM'
-                      identifier.id == 1 else {
-                    return OSStatus(eventNotHandledErr)
-                }
-
-                DispatchQueue.main.async {
-                    _PasswordManagerSharedSelf?.showPasswordManager()
-                }
-                return noErr
-            }
-
-            var eventTypeSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            let userData: UnsafeMutableRawPointer? = nil
-            InstallEventHandler(GetEventDispatcherTarget(), handler, 1, &eventTypeSpec, userData, nil)
-            print("✅ 密码管理器快捷键已注册: Cmd+Shift+V")
-        }
-    }
 
 }
 

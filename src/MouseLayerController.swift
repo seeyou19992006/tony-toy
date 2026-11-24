@@ -5,7 +5,19 @@ final class MouseLayerController {
     private let configStore = MouseLayerConfigStore()
     private let volumeEngine = VolumeScrollEngine()
     private let actionExecutor = AppActionExecutor()
-    private var eventTap: CFMachPort?
+    /// 创建/禁用恢复/录制放行都由 `EventTap` 统一处理
+    private lazy var tap = EventTap(
+        name: "mouseLayer",
+        events: .make([
+            .scrollWheel,
+            .leftMouseDown, .leftMouseUp,
+            .rightMouseDown, .rightMouseUp,
+            .otherMouseDown, .otherMouseUp,
+        ])
+    ) { [weak self] type, event in
+        self?.handleEvent(type: type, event: event)
+    }
+
     private var layerConfig = MouseLayerResolvedConfig.fallback
     private var isLayerActive = false
     private var suppressedMouseButtons: Set<Int64> = []
@@ -24,54 +36,17 @@ final class MouseLayerController {
         reloadLayerConfig()
         volumeEngine.start()
 
-        let eventMask = (1 << CGEventType.scrollWheel.rawValue) |
-                        (1 << CGEventType.leftMouseDown.rawValue) |
-                        (1 << CGEventType.leftMouseUp.rawValue) |
-                        (1 << CGEventType.rightMouseDown.rawValue) |
-                        (1 << CGEventType.rightMouseUp.rawValue) |
-                        (1 << CGEventType.otherMouseDown.rawValue) |
-                        (1 << CGEventType.otherMouseUp.rawValue)
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { _, type, event, refcon in
-                let controller = Unmanaged<MouseLayerController>.fromOpaque(refcon!).takeUnretainedValue()
-                return controller.handleEvent(type: type, event: event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else { return }
-
-        eventTap = tap
-        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        tap.start()
     }
 
     private func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
+        tap.stop()
         volumeEngine.stop()
         isLayerActive = false
         suppressedMouseButtons.removeAll()
     }
 
-    private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // 配置窗口正在录制快捷键：放行所有按键，否则录制器收不到。
-        // 必须在任何 consume/改写之前判断。
-        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
-
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
+    private func handleEvent(type: CGEventType, event: CGEvent) -> CGEvent? {
         let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
         switch type {
         case _ where isMouseDown(type) && buttonNumber == layerConfig.activationButton:
@@ -105,7 +80,7 @@ final class MouseLayerController {
             return nil
         }
 
-        return Unmanaged.passUnretained(event)
+        return event
     }
 
     /// 重新加载层配置（配置窗口改了映射后调用）。

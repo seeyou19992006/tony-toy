@@ -1,64 +1,32 @@
-import Foundation
 import Cocoa
 
-/// 面板可见期间全局接收 Esc。
-/// 面板可能因为别的应用抢焦点而失去键盘焦点，此时本地监听收不到 Esc，
-/// 这个 tap 保证只要面板还显示着，Esc 就一定能把它关掉。
+/// 面板可见期间全局接收按键。
+///
+/// 面板可能因为别的应用抢焦点而失去键盘焦点，此时本地监听收不到按键，
+/// 这个 tap 保证只要面板还显示着，Esc 一定能关掉它、左右键一定能翻页。
+///
+/// 创建/重试/禁用恢复/录制放行都由 `EventTap` 统一处理。
 final class LauncherEscTap {
-    private var eventTap: CFMachPort?
-    private var retryCount = 0
+    private lazy var tap = EventTap(
+        name: "launcherPanel",
+        events: .make([.keyDown])
+    ) { [weak self] type, event in
+        self?.handle(type: type, event: event)
+    }
 
     func start() {
-        stop()
-        let mask = (1 << CGEventType.keyDown.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
-            callback: { _, type, event, refcon in
-                let monitor = Unmanaged<LauncherEscTap>.fromOpaque(refcon!).takeUnretainedValue()
-                return monitor.handle(type: type, event: event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            retryCount += 1
-            if retryCount <= 10 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.start()
-                }
-            }
-            return
-        }
-        retryCount = 0
-        eventTap = tap
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        tap.start()
     }
 
     func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
+        tap.stop()
     }
 
-    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // 配置窗口正在录制快捷键：放行所有按键，否则录制器收不到。
-        // 必须在任何 consume/改写之前判断。
-        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
+    // MARK: - 事件处理
 
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
+    private func handle(type: CGEventType, event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard LauncherController.shared.isPanelVisible else {
-            return Unmanaged.passUnretained(event)
-        }
+        guard LauncherController.shared.isPanelVisible else { return event }
 
         // Esc：关闭面板
         if keyCode == 53 {
@@ -70,7 +38,8 @@ final class LauncherEscTap {
 
         // 其余按键（左右翻页、⌘1-8）交给面板判断，未处理就放行给输入框。
         // tap 回调本身就跑在主线程，直接调用即可，不能用 main.sync 否则死锁。
-        let handled = LauncherController.shared.handlePanelKey(keyCode: keyCode, flags: event.flags)
-        return handled ? nil : Unmanaged.passUnretained(event)
+        let handled = LauncherController.shared.handlePanelKey(
+            keyCode: keyCode, flags: event.flags)
+        return handled ? nil : event
     }
 }

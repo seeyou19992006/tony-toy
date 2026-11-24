@@ -12,6 +12,10 @@ final class AboutPaneViewController: SettingsPaneViewController {
     private let accessibilityStatusLabel = NSTextField(labelWithString: "")
     private let inputMonitoringStatusLabel = NSTextField(labelWithString: "")
 
+    /// 按键追踪面板。懒创建——大多数用户不会用到，
+    /// 提前建一个带 tap 的窗口纯属浪费。
+    private var keyTracePanel: KeyTracePanel?
+
     init() {
         super.init(title: "关于", icon: "info.circle")
     }
@@ -161,7 +165,55 @@ final class AboutPaneViewController: SettingsPaneViewController {
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 8
-        return buttons
+
+        // 输入链路诊断：排查「某个键为什么没反应」用
+        let inputButtons = NSStackView(views: [
+            makeButton("输入诊断报告", action: #selector(showInputDiagnostics)),
+            makeButton("按键追踪…", action: #selector(showKeyTrace)),
+        ])
+        inputButtons.orientation = .horizontal
+        inputButtons.alignment = .centerY
+        inputButtons.spacing = 8
+
+        let stack = NSStackView(views: [buttons, inputButtons])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        return stack
+    }
+
+    @objc private func showInputDiagnostics() {
+        let report = InputDiagnostics.report()
+
+        let alert = NSAlert()
+        alert.messageText = "输入链路诊断"
+        alert.informativeText = report
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "复制到剪贴板")
+        alert.addButton(withTitle: "关闭")
+
+        // informativeText 不适合长文本，用 NSTextView 承载以保持等宽
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 260))
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        let text = NSTextView(frame: scroll.bounds)
+        text.isEditable = false
+        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.string = report
+        scroll.documentView = text
+        alert.accessoryView = scroll
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report, forType: .string)
+        }
+    }
+
+    @objc private func showKeyTrace() {
+        if keyTracePanel == nil {
+            keyTracePanel = KeyTracePanel()
+        }
+        keyTracePanel?.show()
     }
 
     @objc private func openConfigFolder() {
