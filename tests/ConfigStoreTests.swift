@@ -264,6 +264,9 @@ func testMigratorRenamesLegacyFilesAndIsIdempotent() {
     let configAfterSecond = try! store.load()
 
     assertTrue(second.didMigrate == false, "重复迁移应返回 didMigrate = false")
+    assertTrue(
+        second.migratedFeatureCount == 0,
+        "重复迁移不应再计数，实际: \(second.migratedFeatureCount)")
     assertTrue(configAfterFirst == configAfterSecond, "重复迁移应幂等")
     print("testMigratorRenamesLegacyFilesAndIsIdempotent passed")
 }

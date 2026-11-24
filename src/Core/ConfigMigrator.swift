@@ -44,12 +44,14 @@ final class ConfigMigrator {
     func migrateIfNeeded() throws -> Result {
         let configURL = directory.appendingPathComponent("config.json")
 
-        // 已经有统一配置，直接返回
+        // 已经有统一配置，直接返回。
+        // migratedFeatureCount 是「本次迁移了几个节点」，早退时必然是 0，
+        // 不能返回 features.count——那会把「已有配置」误报成「刚迁移完」。
         if FileManager.default.fileExists(atPath: configURL.path) {
             let config = try store.load()
             return Result(
                 config: config, didMigrate: false,
-                migratedFeatureCount: config.features.count)
+                migratedFeatureCount: 0)
         }
 
         var config = TonyToyConfig.default
