@@ -1711,11 +1711,12 @@ git commit -m "feat(core): 新增 FeatureRegistry，配置版本过高时拒绝�
 
 ---
 
-### Task 7: 配置窗口骨架
+### Task 7: Pane 基类
 
 **Files:**
 - Create: `src/UI/Settings/SettingsPaneViewController.swift`
-- Create: `src/UI/Settings/SettingsWindowController.swift`
+
+**为什么先只做基类**：原计划把「窗口控制器」和「9 个 Pane」分成两个任务，但 `SettingsWindowController` 的 `makeSidebarItems()` 会直接引用 9 个具体 Pane 类——Task 7 结束时编译不过，中间状态不可验证。拆成「基类（可独立编译）→ 窗口 + 9 个 Pane（一起，保证可编译）」两半。
 
 - [ ] **Step 1: 实现 Pane 基类**
 
@@ -1727,7 +1728,9 @@ import AppKit
 /// 配置窗口右侧分区的基类。
 ///
 /// 子类在 `viewDidLoad` 里往 `contentStack` 添加行。
-/// 行统一用 `makeRow(title:control:)` 构造，保证全窗口样式一致。
+/// 行统一用 `makeRow(title:control:)` 构造，保证全窗口样式一致——
+/// 手写布局而不是自动生成，因为自动生成布局在项目这个规模会变成负担
+/// （想调个间距都要跟生成器搏斗）。
 class SettingsPaneViewController: NSViewController {
     let paneTitle: String
     let paneIcon: String
@@ -1762,6 +1765,8 @@ class SettingsPaneViewController: NSViewController {
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        // NSScrollView 的 documentView 需要有明确尺寸，
+        // 用容器 + 四边约束把 contentStack 撑开，滚动范围才正确。
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(contentStack)
@@ -1785,6 +1790,8 @@ class SettingsPaneViewController: NSViewController {
 
         view = container
     }
+
+    // MARK: - 行构造
 
     /// 统一的「左标题 + 右控件」行
     func makeRow(title: String, control: NSView) -> NSView {
@@ -1821,222 +1828,19 @@ class SettingsPaneViewController: NSViewController {
 }
 ```
 
-- [ ] **Step 2: 实现窗口控制器**
-
-创建 `src/UI/Settings/SettingsWindowController.swift`：
-
-```swift
-import AppKit
-
-/// 配置窗口：左侧侧边栏 + 右侧内容区。
-///
-/// 用 NSTableView 而不是 NSOutlineView——当前是扁平列表，
-/// 将来要分组再加 OutlineView 不迟。
-final class SettingsWindowController: NSWindowController {
-    /// 侧边栏条目
-    struct SidebarItem {
-        let id: String
-        let title: String
-        let icon: String
-        let makePane: () -> SettingsPaneViewController
-    }
-
-    private let items: [SidebarItem]
-    private let sidebarTableView = NSTableView()
-    private let contentContainer = NSView()
-    private var currentPane: SettingsPaneViewController?
-
-    convenience init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "TonyToy 设置"
-        window.minSize = NSSize(width: 620, height: 440)
-        window.center()
-        window.setFrameAutosaveName("TonyToySettingsWindow")
-
-        self.init(window: window)
-        setupUI()
-    }
-
-    override init(window: NSWindow?) {
-        self.items = Self.makeSidebarItems()
-        super.init(window: window)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) 未实现")
-    }
-
-    // MARK: - 侧边栏条目
-
-    private static func makeSidebarItems() -> [SidebarItem] {
-        [
-            SidebarItem(id: "general", title: "通用", icon: "gearshape") {
-                GeneralPaneViewController()
-            },
-            SidebarItem(id: "capsLayer", title: "Caps 键层", icon: "capslock") {
-                CapsLayerPaneViewController()
-            },
-            SidebarItem(id: "hotkeyLayer", title: "全局快捷键", icon: "command") {
-                HotkeyLayerPaneViewController()
-            },
-            SidebarItem(id: "mouse", title: "鼠标", icon: "computermouse") {
-                MousePaneViewController()
-            },
-            SidebarItem(id: "window", title: "窗口", icon: "macwindow") {
-                WindowPaneViewController()
-            },
-            SidebarItem(id: "launcher", title: "启动器", icon: "magnifyingglass") {
-                LauncherPaneViewController()
-            },
-            SidebarItem(id: "password", title: "密码管理器", icon: "lock") {
-                PasswordPaneViewController()
-            },
-            SidebarItem(id: "gamepad", title: "手柄", icon: "gamecontroller") {
-                GamepadPaneViewController()
-            },
-            SidebarItem(id: "about", title: "关于", icon: "info.circle") {
-                AboutPaneViewController()
-            },
-        ]
-    }
-
-    // MARK: - UI
-
-    private func setupUI() {
-        guard let window, let contentView = window.contentView else { return }
-
-        // 侧边栏
-        let sidebarScroll = NSScrollView()
-        sidebarScroll.hasVerticalScroller = true
-        sidebarScroll.drawsBackground = false
-        sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
-
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
-        column.width = 180
-        sidebarTableView.addTableColumn(column)
-        sidebarTableView.headerView = nil
-        sidebarTableView.rowHeight = 32
-        sidebarTableView.style = .sourceList
-        sidebarTableView.selectionHighlightStyle = .regular
-        sidebarTableView.dataSource = self
-        sidebarTableView.delegate = self
-        sidebarScroll.documentView = sidebarTableView
-
-        // 内容容器
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
-
-        // 分隔线
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-
-        contentView.addSubview(sidebarScroll)
-        contentView.addSubview(separator)
-        contentView.addSubview(contentContainer)
-
-        NSLayoutConstraint.activate([
-            sidebarScroll.topAnchor.constraint(equalTo: contentView.topAnchor),
-            sidebarScroll.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            sidebarScroll.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            sidebarScroll.widthAnchor.constraint(equalToConstant: 180),
-
-            separator.leadingAnchor.constraint(equalTo: sidebarScroll.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: contentView.topAnchor),
-            separator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separator.widthAnchor.constraint(equalToConstant: 1),
-
-            contentContainer.leadingAnchor.constraint(equalTo: separator.trailingAnchor),
-            contentContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            contentContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-
-        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        showPane(at: 0)
-    }
-
-    private func showPane(at index: Int) {
-        guard items.indices.contains(index) else { return }
-
-        currentPane?.view.removeFromSuperview()
-        currentPane?.removeFromParent()
-
-        let pane = items[index].makePane()
-        addChild(pane)
-        pane.view.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(pane.view)
-
-        NSLayoutConstraint.activate([
-            pane.view.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            pane.view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            pane.view.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            pane.view.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-        ])
-
-        currentPane = pane
-    }
-}
-
-// MARK: - 表格数据源
-
-extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        items.count
-    }
-
-    func tableView(
-        _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
-    ) -> NSView? {
-        guard items.indices.contains(row) else { return nil }
-        let item = items[row]
-
-        let cell = NSTableCellView()
-
-        let imageView = NSImageView()
-        imageView.image = NSImage(systemSymbolName: item.icon, accessibilityDescription: item.title)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = NSTextField(labelWithString: item.title)
-        label.font = .systemFont(ofSize: 13)
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        cell.addSubview(imageView)
-        cell.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-            imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 16),
-            imageView.heightAnchor.constraint(equalToConstant: 16),
-
-            label.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-
-        return cell
-    }
-
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        showPane(at: sidebarTableView.selectedRow)
-    }
-}
-```
-
-- [ ] **Step 3: 编译验证**
+- [ ] **Step 2: 编译验证**
 
 Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -5`
-Expected: FAIL，因为 9 个 Pane 还没创建（`GeneralPaneViewController` 等未定义）
+Expected: 输出 `✅ 构建成功:`
 
-- [ ] **Step 4: 提交（先不编译通过，等 Task 8 补全 Pane）**
+> 本任务只新增基类，还没有任何子类引用它，所以应该能独立编译通过。
 
-跳过提交，直接进 Task 8。
+- [ ] **Step 3: 提交**
+
+```bash
+git add src/UI/Settings/SettingsPaneViewController.swift
+git commit -m "feat(ui): 新增配置分区基类，统一行样式与滚动容器"
+```
 
 ---
 
