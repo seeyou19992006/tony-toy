@@ -310,8 +310,20 @@ final class MappingTableEditor: NSView {
             alert.messageText = existing == nil ? "添加映射" : "编辑映射"
             alert.informativeText = form.informativeText
             alert.addButton(withTitle: "确定")
-            alert.addButton(withTitle: "取消")
+            let cancelButton = alert.addButton(withTitle: "取消")
             alert.accessoryView = form.container
+
+            // NSAlert 会把 Esc 自动绑到「取消」按钮，按 ⌘Esc 时弹窗直接被关掉，
+            // 录制器根本收不到（⌘A 不受影响，所以只有 Esc 录不进去）。
+            // 录制期间临时解绑 Esc，让它进到录制器；结束录制后恢复。
+            let cancelKeyEquivalent = cancelButton.keyEquivalent
+            HotkeyRecorder.onRecordingChanged = { [weak cancelButton] isRecording in
+                cancelButton?.keyEquivalent = isRecording ? "" : cancelKeyEquivalent
+            }
+            defer {
+                HotkeyRecorder.onRecordingChanged = nil
+                cancelButton.keyEquivalent = cancelKeyEquivalent
+            }
 
             guard alert.runModal() == .alertFirstButtonReturn else { return }
 
