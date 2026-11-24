@@ -637,6 +637,80 @@ func testRegistryKeepsExistingConfig() {
     print("testRegistryKeepsExistingConfig passed")
 }
 
+func testConfigStoreReadOnlyRejectsSave() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 先写一份正常配置
+    var config = TonyToyConfig.default
+    config.general.theme = .dark
+    try! store.save(config)
+
+    // 进入只读
+    store.isReadOnly = true
+
+    var thrown: ConfigError?
+    do {
+        var mutated = config
+        mutated.general.theme = .light
+        try store.save(mutated)
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    assertTrue(thrown == .readOnly, "只读模式下 save 应抛 readOnly")
+
+    // 磁盘内容必须没变
+    let onDisk = try! ConfigStore(fileURL: fileURL).load()
+    assertTrue(onDisk.general.theme == .dark, "只读模式下不能改写磁盘")
+    print("testConfigStoreReadOnlyRejectsSave passed")
+}
+
+func testRegistryRecordsFutureVersionIssue() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    final class SpyFeature: Feature {
+        let id = "spy"
+        let title = "探针"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = true
+        private(set) var startCount = 0
+        func start() { startCount += 1 }
+        func stop() {}
+    }
+
+    let store = ConfigStore(fileURL: fileURL)
+    let registry = FeatureRegistry(store: store)
+    let spy = SpyFeature()
+    registry.register(spy)
+
+    registry.startAll()
+
+    // 版本过高：不能启动任何功能（跑了也是错的默认值）
+    assertTrue(spy.startCount == 0, "版本过高时不应启动任何功能")
+    assertTrue(
+        registry.loadIssue == .futureVersion(999),
+        "应记录 futureVersion，实际: \(String(describing: registry.loadIssue))")
+    assertTrue(store.isReadOnly, "版本过高时 store 应进入只读模式")
+    print("testRegistryRecordsFutureVersionIssue passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
@@ -664,6 +738,8 @@ struct ConfigStoreTests {
         testRegistryRegistersAndDeduplicates()
         testRegistryFillsDefaultEnabled()
         testRegistryKeepsExistingConfig()
+        testConfigStoreReadOnlyRejectsSave()
+        testRegistryRecordsFutureVersionIssue()
         print("ConfigStoreTests all passed")
     }
 }

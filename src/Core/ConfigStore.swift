@@ -7,6 +7,8 @@ import Foundation
 enum ConfigError: Error, Equatable {
     /// 配置文件由更新版本的应用写过
     case futureVersion(Int)
+    /// 配置处于只读模式（版本过高），拒绝写入以免覆盖新版本数据
+    case readOnly
 }
 
 /// 统一配置的读写入口。
@@ -31,6 +33,10 @@ final class ConfigStore {
 
     /// 配置变更回调。在调用 `updateFeature` 的线程上同步触发（当前即主线程）。
     var onChange: ((TonyToyConfig) -> Void)?
+
+    /// 只读模式。配置文件版本高于本应用时置为 true——
+    /// 此时任何 save 都会被拒绝，避免旧版本把新版本配置整份覆盖写回。
+    var isReadOnly = false
 
     init(fileURL: URL = ConfigStore.defaultURL) {
         self.fileURL = fileURL
@@ -80,6 +86,11 @@ final class ConfigStore {
     /// 不触发 `onChange`：这里是纯落盘，批量/迁移场景不应触发全量热更新。
     /// 需要「落盘 + 通知」时用 `updateFeature`。
     func save(_ config: TonyToyConfig) throws {
+        guard !isReadOnly else {
+            dbg("配置处于只读模式，拒绝写入")
+            throw ConfigError.readOnly
+        }
+
         let directory = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)

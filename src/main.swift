@@ -73,6 +73,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuStateStore = MenuStateStore()
     private let passwordManager = PasswordManagerWindow()
     private let launcherController = LauncherController.shared
+    /// 配置窗口。用 lazy 是为了不在启动时创建整套 AppKit 视图——
+    /// 大多数用户一次也不会打开设置，没必要为此拖慢冷启动。
+    private lazy var settingsWindowController = SettingsWindowController()
     private let cmdTabSwitcher = CmdTabSwitcher()
     /// 手柄 Home 是独立输入源，用自己的执行器，不掺进键鼠那几条链路
     private let gamepadActionExecutor = AppActionExecutor()
@@ -101,6 +104,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
+
+        // 统一配置的加载入口。当前还没有 Feature 注册进来，所以这里只做
+        // 「读配置 + 版本检查」；后续把功能接进 Registry 后无需再改这里。
+        FeatureRegistry.shared.startAll()
+
+        // 配置由更新版本写过：功能全部未启动，且不写入配置。
+        // 静默跑默认值会让用户以为「设置丢了」，必须明确告知。
+        if let issue = FeatureRegistry.shared.loadIssue,
+            case .futureVersion(let version) = issue
+        {
+            // 状态栏应用默认不激活，直接弹模态会压在别的窗口后面（无 Dock 图标
+            // 也没法用 ⌘Tab 切过去），看起来就像「应用卡死」。先激活再弹。
+            NSApp.activate(ignoringOtherApps: true)
+
+            let alert = NSAlert()
+            alert.messageText = "配置由更新版本写入"
+            alert.informativeText = """
+                config.json 的版本（\(version)）高于当前应用支持的版本（\(TonyToyConfig.currentVersion)）。
+
+                为避免覆盖高版本配置，本次没有加载任何功能，也不会写入配置文件。
+                请升级 TonyToy，或备份后手动处理 ~/.config/tony-toy/config.json。
+                """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "打开配置文件夹")
+            alert.addButton(withTitle: "知道了")
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(ConfigStore.defaultURL.deletingLastPathComponent())
+            }
+        }
 
         mouseLayerController.onVolumeChanged = { [weak self] volume in
             // 图标固定为魔方，音量改为悬停提示
@@ -169,6 +202,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let versionItem = NSMenuItem(title: "TonyToy v\(version)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
+        menu.addItem(NSMenuItem.separator())
+
+        // 打开配置窗口。放在版本号之后，与下面的功能开关分组隔开。
+        let settingsItem = NSMenuItem(
+            title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
 
         let volItem = NSMenuItem(title: "鼠标侧键层", action: #selector(toggleVolume), keyEquivalent: "")
@@ -297,6 +336,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc private func showLauncher() {
         launcherController.show()
+    }
+
+    @objc private func showSettings() {
+        settingsWindowController.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func registerPasswordManagerHotkey() {

@@ -10,6 +10,10 @@ final class FeatureRegistry {
     private var features: [Feature] = []
     private let store: ConfigStore
 
+    /// 启动时加载配置遇到的错误（目前只有 futureVersion）。
+    /// 非 nil 时应用应显示告警，且不再写入配置。
+    private(set) var loadIssue: ConfigError?
+
     init(store: ConfigStore = .shared) {
         self.store = store
     }
@@ -40,9 +44,25 @@ final class FeatureRegistry {
     /// 配置损坏回退 `.default` 后 `features` 为空，此时**必须**补齐
     /// 每个已注册 Feature 的默认项——否则所有功能都会被当成「未配置」
     /// 而拿到错误的默认状态。
+    ///
+    /// **版本过高时不启动任何功能**：那意味着磁盘上是本应用读不懂的配置，
+    /// 跑默认值等于给用户一个错误的工作状态。同时把 store 置为只读，
+    /// 防止后续「整份 save」把新版本数据覆盖掉。
     func startAll() {
-        let config = (try? store.load()) ?? .default
-        applyAll(normalizedConfig(config))
+        do {
+            let config = try store.load()
+            applyAll(normalizedConfig(config))
+        } catch let error as ConfigError {
+            // 版本高于本应用：不能跑默认值（那是错的配置），
+            // 也不能写入（会覆盖新版本数据）。记录问题，由界面提示用户。
+            loadIssue = error
+            store.isReadOnly = true
+            dbg("配置加载失败，功能未启动: \(error)")
+        } catch {
+            // 其它错误不该出现（load 内部已兜底），保底跑默认值
+            dbg("配置加载意外失败，使用默认值: \(error)")
+            applyAll(normalizedConfig(.default))
+        }
 
         // 配置外部变更时热更新
         store.onChange = { [weak self] newConfig in
