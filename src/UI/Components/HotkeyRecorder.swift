@@ -142,6 +142,15 @@ enum HotkeyDisplay {
         return nil
     }()
 
+    /// 所有可选键名。右键菜单和程序化设置都用它。
+    ///
+    /// 存在的意义：65 键键盘没有独立的 `` ` `` 键（在 Esc 位置，
+    /// 要靠 Fn/层切换），光靠「按下捕获」录不到。必须留一条手动指定键名的路。
+    static func allKeyNames() -> [String] {
+        let names = aliasConfig.map { Array($0.keyboardKeys.keys) } ?? fallbackKeyboardKeyNames
+        return names.sorted()
+    }
+
     private static let keyNameByCode: [CGKeyCode: String] = {
         let names = aliasConfig.map { Array($0.keyboardKeys.keys) } ?? fallbackKeyboardKeyNames
         var map: [CGKeyCode: String] = [:]
@@ -264,7 +273,7 @@ final class HotkeyRecorder: NSView {
     private func commonInit() {
         translatesAutoresizingMaskIntoConstraints = false
         setContentHuggingPriority(.defaultLow, for: .horizontal)
-        toolTip = "点击后按下要录制的按键；Esc 取消，Delete 清空"
+        toolTip = "点击后按下要录制的按键；Esc 取消，Delete 清空；右键手动选键名"
         setAccessibilityLabel("快捷键录制")
         setAccessibilityRole(.button)
     }
@@ -293,6 +302,40 @@ final class HotkeyRecorder: NSView {
     }
 
     // MARK: 录制
+
+    /// 右键手动选键名。
+    ///
+    /// 为什么需要：65 键 / 60 键键盘没有独立的 `` ` `` 键（它在 Esc 位置，
+    /// 要靠 Fn 或层切换），凭「按下捕获」永远录不到。
+    /// 这里给一条按名字指定的路，不依赖物理键位。
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+
+        let header = NSMenuItem(title: "手动指定按键", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(NSMenuItem.separator())
+
+        for name in HotkeyDisplay.allKeyNames() {
+            let item = NSMenuItem(
+                title: "\(HotkeyDisplay.displayName(forKey: name))   \(name)",
+                action: #selector(pickKeyFromMenu(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = name
+            menu.addItem(item)
+        }
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func pickKeyFromMenu(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        let currentModifiers = spec?.modifiers ?? []
+        spec = HotkeyKeySpec(key: name, modifiers: currentModifiers)
+        stopRecording()
+        onChange?(spec)
+    }
 
     override func mouseDown(with event: NSEvent) {
         if isRecording {
@@ -363,12 +406,19 @@ final class HotkeyRecorder: NSView {
         case .keyDown:
             guard !event.isARepeat else { return true }
 
-            // 取消 / 清空优先于普通录入，避免把 Esc/Delete 本身录成键
-            if event.keyCode == 53 {  // escape
+            // 取消 / 清空只认「裸键」。
+            //
+            // 不能无条件把 Esc 当取消：65 键键盘没有独立的 ` 键，
+            // 「⌘Esc → ⌘`」是很常见的映射，一律取消就永远录不进去。
+            // 同理 ⌘Delete 也应该能录。
+            let currentModifiers = modifierNames(from: event.modifierFlags)
+
+            if event.keyCode == 53, currentModifiers.isEmpty {  // 裸 escape
                 cancelRecording()
                 return true
             }
-            if event.keyCode == 51 || event.keyCode == 117 {  // delete / forward delete
+            if (event.keyCode == 51 || event.keyCode == 117), currentModifiers.isEmpty {
+                // 裸 delete / forward delete：清空
                 spec = nil
                 stopRecording()
                 onChange?(nil)
@@ -381,10 +431,7 @@ final class HotkeyRecorder: NSView {
                 return true
             }
 
-            let newSpec = HotkeyKeySpec(
-                key: keyName,
-                modifiers: modifierNames(from: event.modifierFlags)
-            )
+            let newSpec = HotkeyKeySpec(key: keyName, modifiers: currentModifiers)
             spec = newSpec
             stopRecording()
             onChange?(spec)
