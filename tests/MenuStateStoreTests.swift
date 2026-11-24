@@ -26,7 +26,7 @@ struct MenuStateStoreTests {
 
         let expected = MenuToggleState(
             isVolumeEnabled: false, isCapsEnabled: true, isHotkeyEnabled: false,
-            isCmdTabEnabled: true, isMouseFollowEnabled: true)
+            isCmdTabEnabled: true, isMouseFollowEnabled: true, isGamepadHomeEnabled: false)
         store.save(expected)
 
         let reloaded = store.load()
@@ -40,6 +40,9 @@ struct MenuStateStoreTests {
         assertTrue(
             reloaded.isMouseFollowEnabled == expected.isMouseFollowEnabled,
             "mouse follow state should persist")
+        assertTrue(
+            reloaded.isGamepadHomeEnabled == expected.isGamepadHomeEnabled,
+            "gamepad home state should persist")
 
         print("MenuStateStoreTests passed")
     }
