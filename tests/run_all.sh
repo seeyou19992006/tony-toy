@@ -25,6 +25,7 @@ swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
 swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
        "$REPO_ROOT/src/Core/TonyToyConfig.swift" \
        "$REPO_ROOT/src/Core/ConfigStore.swift" \
+       "$REPO_ROOT/src/Core/ConfigMigrator.swift" \
        "$REPO_ROOT/src/DebugLog.swift" \
        "$REPO_ROOT/tests/ConfigStoreTests.swift" \
        -o /tmp/config-tests
