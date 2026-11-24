@@ -47,6 +47,8 @@
 | Task 2 审查 | 默认值归属：`isEnabled` 的 `?? true` 对 `switcher`/`mouseFollow` 与旧默认相反（旧为 `false`）。应由 Feature 自己声明默认值 | ✅ Task 5 已落地（`defaultEnabled`） |
 | Task 6 审查 | **`startAll()` 用 `try?` 吞掉 `futureVersion`**：版本过高时静默跑默认值，语义不是「拒绝加载」。今天不丢数据（`updateFeature`/`ConfigMigrator` 都会透传错误），但 Task 7+ 一旦出现「整份 save」路径，内存里的 `.default` 会覆盖新版本配置 | **Task 9 必须**：`startAll()` 区分错误 + `ConfigStore` 只读模式 + 菜单栏告警 |
 | Task 6 审查 | `stopAll()` 无调用点、无测试——若第一阶段结束仍未接入退出流程，应删除而不是留死代码 | Task 9 |
+| Task 8 审查 | **`inputAliases` 是孤儿节点**：迁移把它写进 `features.inputAliases`，但 9 个分区里没有它的位置（只有 7 个 Feature 有 Pane）。它是「键名 → 键码」的固定数据表，用户通常不需要改 | 第二阶段：要么归到「高级」只读页，要么从 `FeatureID` 移除、迁移时直接丢弃 |
+| Task 8 审查 | 切换分区时销毁重建 Pane，会丢输入内容和滚动位置。当前 Pane 都是占位页无影响 | 第二阶段做真实控件时，按 `item.id` 缓存 Pane 实例 + 显示时从 `ConfigStore` 刷新 |
 
 ---
 
