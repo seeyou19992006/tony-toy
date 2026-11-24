@@ -23,7 +23,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var runningBundleIDs = Set<String>()
 
     private let panelWidth: CGFloat = 720
-    private let searchAreaHeight: CGFloat = 96
+    private let searchAreaHeight: CGFloat = 64
     private let rowHeight: CGFloat = 66
     private let listBottomPadding: CGFloat = 14
     private let maxRows = 8
@@ -180,7 +180,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
                              y: visible.maxY - topInset - height)
         setFrame(NSRect(origin: origin, size: NSSize(width: panelWidth, height: height)), display: true)
 
-        searchField.frame = NSRect(x: 24, y: height - searchAreaHeight + 26,
+        // 输入框在搜索区内垂直居中：上下各留 12pt
+        searchField.frame = NSRect(x: 24, y: height - searchAreaHeight + 12,
                                    width: panelWidth - 48, height: 40)
         separator.frame = NSRect(x: 16, y: height - searchAreaHeight,
                                  width: panelWidth - 32, height: 1)
