@@ -108,11 +108,16 @@ enum WindowMovementPlanner {
         guard let lastAutoFrameOnSourceDisplay else {
             return false
         }
-        let tolerance: CGFloat = 16
-        return abs(currentFrame.minX - lastAutoFrameOnSourceDisplay.minX) <= tolerance &&
-            abs(currentFrame.minY - lastAutoFrameOnSourceDisplay.minY) <= tolerance &&
-            abs(currentFrame.width - lastAutoFrameOnSourceDisplay.width) <= tolerance &&
-            abs(currentFrame.height - lastAutoFrameOnSourceDisplay.height) <= tolerance
+        return framesMatch(currentFrame, lastAutoFrameOnSourceDisplay, tolerance: 16)
+    }
+
+    static func shouldUseRestoredFrame(
+        currentFrame: CGRect,
+        lastAutoFramesOnSourceDisplay: [CGRect]
+    ) -> Bool {
+        lastAutoFramesOnSourceDisplay.contains {
+            framesMatch(currentFrame, $0, tolerance: 16)
+        }
     }
 
     static func restoredFrame(
@@ -146,6 +151,27 @@ enum WindowMovementPlanner {
         let tolerance: CGFloat = 16
         return projectedFrame.width < originalFrame.width - tolerance ||
             projectedFrame.height < originalFrame.height - tolerance
+    }
+
+    /// 只要往返投影无法无损还原（大小被缩窄或位置被夹紧），或源窗口处于最大化状态，就缓存原位置和大小。
+    static func shouldCacheForReturn(
+        originalFrame: CGRect,
+        projectedFrame: CGRect,
+        from source: DisplayLayout,
+        to target: DisplayLayout
+    ) -> Bool {
+        if isNearVisibleFrame(originalFrame, visibleFrame: source.visibleFrame) {
+            return true
+        }
+        let roundTrip = project(frame: projectedFrame, from: target, to: source)
+        return !framesMatch(originalFrame, roundTrip, tolerance: 16)
+    }
+
+    private static func framesMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
+        abs(lhs.minX - rhs.minX) <= tolerance &&
+            abs(lhs.minY - rhs.minY) <= tolerance &&
+            abs(lhs.width - rhs.width) <= tolerance &&
+            abs(lhs.height - rhs.height) <= tolerance
     }
 
     static func clamp(frame: CGRect, to visibleFrame: CGRect) -> CGRect {
