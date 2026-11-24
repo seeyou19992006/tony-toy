@@ -14,6 +14,9 @@ enum JSONValue: Codable, Equatable {
     case array([JSONValue])
     case object([String: JSONValue])
 
+    /// 探测顺序 Bool → Int → Double 有意为之（标量在前、容器在后）。
+    /// 副作用：JSON 里写 `8.0` 会归为 `.int(8)`，因为 Int 先于 Double 探测。
+    /// 需要严格区分 int/double 的 Feature 应改用 NSNumber 的 objCType 判断，不要改这里的顺序。
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
@@ -66,6 +69,7 @@ extension JSONValue {
 
     func double(_ key: String) -> Double? {
         guard case .object(let dict) = self else { return nil }
+        // 必需放宽：解码器把 8.0 归一成 .int(8)，严格只认 .double 会让手写的整数值配置静默读不出来。
         switch dict[key] {
         case .double(let value): return value
         case .int(let value): return Double(value)

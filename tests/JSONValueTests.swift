@@ -16,6 +16,12 @@ func testJSONValueRoundTrip() {
 
     let decoded = try! JSONDecoder().decode(JSONValue.self, from: data)
     assertTrue(decoded == original, "往返编解码应保持不变")
+
+    let jsonString = String(data: data, encoding: .utf8)!
+    assertTrue(
+        jsonString.contains(#""array":[1,2]"#),
+        "编码产物应为扁平 JSON，不含 type/value 包裹，实际: \(jsonString)")
+
     print("testJSONValueRoundTrip passed")
 }
 
@@ -47,6 +53,23 @@ func testJSONValueAccessors() {
     assertTrue(object.string("name") == "启动器", "string 取值")
     assertTrue(object.bool("missing") == nil, "缺失 key 返回 nil")
     assertTrue(object.bool("name") == nil, "类型不匹配返回 nil")
+
+    // double：int 降级 + 严格匹配 + 类型不匹配
+    assertTrue(object.double("count") == 8.0, "double 应接受 int 降级")
+    assertTrue(object.double("name") == nil, "double 读字符串应返回 nil")
+    let withDouble: JSONValue = .object(["ratio": .double(0.5)])
+    assertTrue(withDouble.double("ratio") == 0.5, "double 严格匹配")
+
+    // array
+    let withArray: JSONValue = .object(["list": .array([.int(1), .bool(true)])])
+    assertTrue(withArray.array("list") == [.int(1), .bool(true)], "array 取值")
+    assertTrue(withArray.array("missing") == nil, "array 缺失 key 返回 nil")
+
+    // object
+    let withObject: JSONValue = .object(["nested": .object(["k": .string("v")])])
+    assertTrue(withObject.object("nested")?["k"] == .string("v"), "object 取值")
+    assertTrue(withObject.object("missing") == nil, "object 缺失 key 返回 nil")
+
     print("testJSONValueAccessors passed")
 }
 
