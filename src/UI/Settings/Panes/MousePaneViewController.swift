@@ -12,7 +12,7 @@ final class MousePaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("鼠标侧键层"))
         contentStack.addArrangedSubview(
             makePlaceholder("鼠标侧键层配置将在第三阶段实现。"))
     }

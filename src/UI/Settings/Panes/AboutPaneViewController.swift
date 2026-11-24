@@ -12,7 +12,7 @@ final class AboutPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("版本与诊断"))
         contentStack.addArrangedSubview(
             makePlaceholder("版本信息与诊断工具将在第三阶段实现。"))
     }

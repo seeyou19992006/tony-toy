@@ -12,7 +12,7 @@ final class WindowPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("窗口切换与平铺"))
         contentStack.addArrangedSubview(
             makePlaceholder("⌘Tab 接管与窗口平铺配置将在第二阶段实现。"))
     }

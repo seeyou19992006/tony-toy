@@ -189,7 +189,11 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let cell = NSTableCellView()
 
         let imageView = NSImageView()
-        imageView.image = NSImage(systemSymbolName: item.icon, accessibilityDescription: item.title)
+        // computermouse 是 macOS 12+ 才有的 SF Symbol，最低目标 11 上
+        // 会返回 nil（静默空白）。降级到 10.15 就有的 mouse。
+        imageView.image =
+            NSImage(systemSymbolName: item.icon, accessibilityDescription: item.title)
+            ?? NSImage(systemSymbolName: "mouse", accessibilityDescription: item.title)
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: item.title)

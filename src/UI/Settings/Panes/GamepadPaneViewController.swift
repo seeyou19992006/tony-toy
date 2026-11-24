@@ -12,7 +12,7 @@ final class GamepadPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("手柄 Home 键"))
         contentStack.addArrangedSubview(
             makePlaceholder("手柄 Home 键配置将在第五阶段实现。"))
     }

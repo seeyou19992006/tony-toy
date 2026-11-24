@@ -12,7 +12,7 @@ final class PasswordPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("密码库"))
         contentStack.addArrangedSubview(
             makePlaceholder("密码管理器设置将在第二阶段实现。"))
     }

@@ -12,7 +12,7 @@ final class LauncherPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("应用启动器"))
         contentStack.addArrangedSubview(
             makePlaceholder("启动器设置将在第二阶段实现。"))
     }

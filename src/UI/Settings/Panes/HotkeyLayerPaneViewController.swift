@@ -12,7 +12,7 @@ final class HotkeyLayerPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("全局快捷键映射"))
         contentStack.addArrangedSubview(
             makePlaceholder("全局快捷键映射表将在第三阶段实现。"))
     }

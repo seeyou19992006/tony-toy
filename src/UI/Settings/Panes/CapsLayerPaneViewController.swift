@@ -12,7 +12,7 @@ final class CapsLayerPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
+        contentStack.addArrangedSubview(makeSectionTitle("Caps 层映射"))
         contentStack.addArrangedSubview(
             makePlaceholder("Caps 层映射表将在第三阶段实现。"))
     }
