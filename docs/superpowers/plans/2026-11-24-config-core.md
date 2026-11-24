@@ -1844,9 +1844,10 @@ git commit -m "feat(ui): 新增配置分区基类，统一行样式与滚动容�
 
 ---
 
-### Task 8: 九个空 Pane
+### Task 8: 配置窗口 + 九个空 Pane
 
 **Files:**
+- Create: `src/UI/Settings/SettingsWindowController.swift`
 - Create: `src/UI/Settings/Panes/GeneralPaneViewController.swift`
 - Create: `src/UI/Settings/Panes/CapsLayerPaneViewController.swift`
 - Create: `src/UI/Settings/Panes/HotkeyLayerPaneViewController.swift`
@@ -1857,9 +1858,224 @@ git commit -m "feat(ui): 新增配置分区基类，统一行样式与滚动容�
 - Create: `src/UI/Settings/Panes/GamepadPaneViewController.swift`
 - Create: `src/UI/Settings/Panes/AboutPaneViewController.swift`
 
-- [ ] **Step 1: 创建九个 Pane 文件**
+**为什么与 Task 7 分开**：`SettingsWindowController.makeSidebarItems()` 直接引用 9 个具体 Pane 类，所以「窗口 + 9 个 Pane」必须一起提交才能编译通过。
 
-每个文件结构相同，只有类名、标题、图标、占位文案不同。以下是 `GeneralPaneViewController.swift`：
+- [ ] **Step 1: 实现窗口控制器**
+
+创建 `src/UI/Settings/SettingsWindowController.swift`：
+
+```swift
+import AppKit
+
+/// 配置窗口：左侧侧边栏 + 右侧内容区。
+///
+/// 用 NSTableView 而不是 NSOutlineView——当前是扁平列表，
+/// 将来要分组再加 OutlineView 不迟。
+final class SettingsWindowController: NSWindowController {
+    /// 侧边栏条目
+    struct SidebarItem {
+        let id: String
+        let title: String
+        let icon: String
+        let makePane: () -> SettingsPaneViewController
+    }
+
+    private let items: [SidebarItem]
+    private let sidebarTableView = NSTableView()
+    private let contentContainer = NSView()
+    private var currentPane: SettingsPaneViewController?
+
+    convenience init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "TonyToy 设置"
+        window.minSize = NSSize(width: 620, height: 440)
+        window.center()
+        window.setFrameAutosaveName("TonyToySettingsWindow")
+
+        self.init(window: window)
+        setupUI()
+    }
+
+    override init(window: NSWindow?) {
+        self.items = Self.makeSidebarItems()
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) 未实现")
+    }
+
+    // MARK: - 侧边栏条目
+
+    /// 9 个分区。顺序即侧边栏显示顺序。
+    ///
+    /// id 必须与 `FeatureID` 常量一致——配置窗口靠它读写对应功能的配置。
+    /// general 和 about 不是 Feature（没有配置项），用固定 id。
+    private static func makeSidebarItems() -> [SidebarItem] {
+        [
+            SidebarItem(id: "general", title: "通用", icon: "gearshape") {
+                GeneralPaneViewController()
+            },
+            SidebarItem(id: FeatureID.capsLayer, title: "Caps 键层", icon: "capslock") {
+                CapsLayerPaneViewController()
+            },
+            SidebarItem(id: FeatureID.hotkeyLayer, title: "全局快捷键", icon: "command") {
+                HotkeyLayerPaneViewController()
+            },
+            SidebarItem(id: FeatureID.mouseLayer, title: "鼠标", icon: "computermouse") {
+                MousePaneViewController()
+            },
+            SidebarItem(id: FeatureID.switcher, title: "窗口", icon: "macwindow") {
+                WindowPaneViewController()
+            },
+            SidebarItem(id: FeatureID.launcher, title: "启动器", icon: "magnifyingglass") {
+                LauncherPaneViewController()
+            },
+            SidebarItem(id: FeatureID.passwordVault, title: "密码管理器", icon: "lock") {
+                PasswordPaneViewController()
+            },
+            SidebarItem(id: FeatureID.gamepad, title: "手柄", icon: "gamecontroller") {
+                GamepadPaneViewController()
+            },
+            SidebarItem(id: "about", title: "关于", icon: "info.circle") {
+                AboutPaneViewController()
+            },
+        ]
+    }
+
+    // MARK: - UI
+
+    private func setupUI() {
+        guard let window, let contentView = window.contentView else { return }
+
+        // 侧边栏
+        let sidebarScroll = NSScrollView()
+        sidebarScroll.hasVerticalScroller = true
+        sidebarScroll.drawsBackground = false
+        sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
+        column.width = 180
+        sidebarTableView.addTableColumn(column)
+        sidebarTableView.headerView = nil
+        sidebarTableView.rowHeight = 32
+        sidebarTableView.style = .sourceList
+        sidebarTableView.selectionHighlightStyle = .regular
+        sidebarTableView.dataSource = self
+        sidebarTableView.delegate = self
+        sidebarScroll.documentView = sidebarTableView
+
+        // 内容容器
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        // 分隔线
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(sidebarScroll)
+        contentView.addSubview(separator)
+        contentView.addSubview(contentContainer)
+
+        NSLayoutConstraint.activate([
+            sidebarScroll.topAnchor.constraint(equalTo: contentView.topAnchor),
+            sidebarScroll.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            sidebarScroll.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            sidebarScroll.widthAnchor.constraint(equalToConstant: 180),
+
+            separator.leadingAnchor.constraint(equalTo: sidebarScroll.trailingAnchor),
+            separator.topAnchor.constraint(equalTo: contentView.topAnchor),
+            separator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            separator.widthAnchor.constraint(equalToConstant: 1),
+
+            contentContainer.leadingAnchor.constraint(equalTo: separator.trailingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+
+        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        showPane(at: 0)
+    }
+
+    private func showPane(at index: Int) {
+        guard items.indices.contains(index) else { return }
+
+        // 切换分区时销毁旧 Pane，保证每次进入都是新状态
+        currentPane?.view.removeFromSuperview()
+        currentPane?.removeFromParent()
+
+        let pane = items[index].makePane()
+        addChild(pane)
+        pane.view.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(pane.view)
+
+        NSLayoutConstraint.activate([
+            pane.view.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            pane.view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            pane.view.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            pane.view.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+
+        currentPane = pane
+    }
+}
+
+// MARK: - 表格数据源
+
+extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        items.count
+    }
+
+    func tableView(
+        _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
+    ) -> NSView? {
+        guard items.indices.contains(row) else { return nil }
+        let item = items[row]
+
+        let cell = NSTableCellView()
+
+        let imageView = NSImageView()
+        imageView.image = NSImage(systemSymbolName: item.icon, accessibilityDescription: item.title)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: item.title)
+        label.font = .systemFont(ofSize: 13)
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.addSubview(imageView)
+        cell.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 16),
+            imageView.heightAnchor.constraint(equalToConstant: 16),
+
+            label.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        showPane(at: sidebarTableView.selectedRow)
+    }
+}
+```
+
+- [ ] **Step 2: 实现九个空 Pane**
+
+每个文件结构相同，只有类名、标题、图标、占位文案不同。以下是 `src/UI/Settings/Panes/GeneralPaneViewController.swift` 的完整内容：
 
 ```swift
 import AppKit
@@ -1883,48 +2099,57 @@ final class GeneralPaneViewController: SettingsPaneViewController {
 }
 ```
 
-其余 8 个文件按同样模式创建，替换下表的值：
+**其余 8 个文件**：复制上面的文件，只替换 5 处（文件名、类名、`title:` 参数、`icon:` 参数、占位文案）。对照表：
 
-| 文件名 | 类名 | title 参数 | icon 参数 | 占位文案 |
+| 文件 | 类名 | title | icon | 占位文案 |
 |---|---|---|---|---|
-| `CapsLayerPaneViewController.swift` | `CapsLayerPaneViewController` | `"Caps 键层"` | `"capslock"` | `"Caps 层映射表将在第四阶段实现。"` |
-| `HotkeyLayerPaneViewController.swift` | `HotkeyLayerPaneViewController` | `"全局快捷键"` | `"command"` | `"全局快捷键映射表将在第四阶段实现。"` |
-| `MousePaneViewController.swift` | `MousePaneViewController` | `"鼠标"` | `"computermouse"` | `"鼠标侧键层配置将在第四阶段实现。"` |
+| `CapsLayerPaneViewController.swift` | `CapsLayerPaneViewController` | `"Caps 键层"` | `"capslock"` | `"Caps 层映射表将在第三阶段实现。"` |
+| `HotkeyLayerPaneViewController.swift` | `HotkeyLayerPaneViewController` | `"全局快捷键"` | `"command"` | `"全局快捷键映射表将在第三阶段实现。"` |
+| `MousePaneViewController.swift` | `MousePaneViewController` | `"鼠标"` | `"computermouse"` | `"鼠标侧键层配置将在第三阶段实现。"` |
 | `WindowPaneViewController.swift` | `WindowPaneViewController` | `"窗口"` | `"macwindow"` | `"⌘Tab 接管与窗口平铺配置将在第二阶段实现。"` |
 | `LauncherPaneViewController.swift` | `LauncherPaneViewController` | `"启动器"` | `"magnifyingglass"` | `"启动器设置将在第二阶段实现。"` |
 | `PasswordPaneViewController.swift` | `PasswordPaneViewController` | `"密码管理器"` | `"lock"` | `"密码管理器设置将在第二阶段实现。"` |
 | `GamepadPaneViewController.swift` | `GamepadPaneViewController` | `"手柄"` | `"gamecontroller"` | `"手柄 Home 键配置将在第五阶段实现。"` |
 | `AboutPaneViewController.swift` | `AboutPaneViewController` | `"关于"` | `"info.circle"` | `"版本信息与诊断工具将在第三阶段实现。"` |
 
-- [ ] **Step 2: 编译验证**
+> **注意**：`PasswordPaneViewController` 的类名不要叫 `PasswordManagerPaneViewController`——与现有的 `PasswordManagerWindow` 区分开。
+
+- [ ] **Step 3: 编译验证**
 
 Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -10`
 Expected: 输出 `✅ 构建成功:`
 
-- [ ] **Step 3: 手工验证窗口能打开**
+- [ ] **Step 4: 手工验证窗口能打开**
 
-临时在 `main.swift` 的 `applicationDidFinishLaunching` 里加一行（**验证后删除**）：
+**临时**在 `src/main.swift` 的 `applicationDidFinishLaunching` 末尾加（**验证后删除**）：
 
 ```swift
-DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-    let controller = SettingsWindowController()
-    controller.showWindow(nil)
-    NSApp.activate(ignoringOtherApps: true)
-}
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            let controller = SettingsWindowController()
+            controller.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
 ```
 
 Run: `./scripts/build.sh && open dist/build/TonyToy.app`
 Expected: 1 秒后弹出配置窗口，左侧 9 个分区，点击能切换右侧内容（显示占位文案）
 
-- [ ] **Step 4: 删除临时验证代码**
+> 如果打不开或布局异常，**不要**猜，把现象报告回来。
 
-删掉 Step 3 加的 `DispatchQueue.main.asyncAfter` 块。
+- [ ] **Step 5: 删除临时验证代码**
 
-- [ ] **Step 5: 提交**
+删掉 Step 4 加的 `DispatchQueue.main.asyncAfter` 块。
+
+- [ ] **Step 6: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && ./scripts/build.sh 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 7: 提交**
 
 ```bash
 git add src/UI/Settings/
-git commit -m "feat(ui): 新增配置窗口骨架与 9 个空分区"
+git commit -m "feat(ui): 新增配置窗口（侧边栏导航）与九个空分区"
 ```
 
 ---
