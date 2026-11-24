@@ -11,7 +11,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let scrollView = NSScrollView()
     private let background = NSVisualEffectView()
     private let container = NSView()
-    private let tintView = NSView()
+    private let tintView = AppearanceAwareTintView()
 
     private var results: [AppEntry] = []
     private let pageSize = 8
@@ -44,7 +44,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         backgroundColor = .clear
         hasShadow = true
         hidesOnDeactivate = false
-        appearance = NSAppearance(named: .darkAqua)
+        // 不要硬编码 appearance——那会覆盖 `NSApp.appearance`，
+        // 让设置里的「主题」对启动器/切换器失效。留空即继承应用外观。
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         delegate = self
 
@@ -73,7 +74,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
         // 深色着色层：压暗毛玻璃，保证深色主题下的对比度
         tintView.wantsLayer = true
-        tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.86).cgColor
+        // 颜色由 `AppearanceAwareTintView.updateLayer` 按当前外观算，
+        // 不在这里写死——写死的话切主题只有框架变、遮罩还是旧颜色。
         tintView.autoresizingMask = [.width, .height]
         tintView.frame = background.bounds
         background.addSubview(tintView)
@@ -82,7 +84,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         searchField.font = .systemFont(ofSize: 30, weight: .regular)
-        searchField.textColor = .white
+        searchField.textColor = .labelColor
         searchField.placeholderString = "搜索应用"
         searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = true
@@ -526,24 +528,24 @@ final class ResultCell: NSTableCellView {
         addSubview(iconView)
 
         nameLabel.font = .systemFont(ofSize: 16, weight: .regular)
-        nameLabel.textColor = .white
+        nameLabel.textColor = .labelColor
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         pathLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
-        pathLabel.textColor = NSColor.white.withAlphaComponent(0.55)
+        pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
         addSubview(pathLabel)
 
         shortcutLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        shortcutLabel.textColor = NSColor.white.withAlphaComponent(0.6)
+        shortcutLabel.textColor = .tertiaryLabelColor
         shortcutLabel.alignment = .right
         addSubview(shortcutLabel)
 
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 8
         badge.layer?.borderWidth = 2
-        badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
+        badge.layer?.borderColor = NSColor.separatorColor.cgColor
         badge.isHidden = true
         addSubview(badge)
     }
@@ -568,9 +570,9 @@ final class ResultCell: NSTableCellView {
         pathLabel.stringValue = path
         shortcutLabel.stringValue = shortcut
         iconView.image = icon
-        nameLabel.textColor = .white
-        pathLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.8 : 0.55)
-        shortcutLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.95 : 0.6)
+        nameLabel.textColor = .labelColor
+        pathLabel.textColor = selected ? .secondaryLabelColor : .tertiaryLabelColor
+        shortcutLabel.textColor = selected ? .secondaryLabelColor : .tertiaryLabelColor
 
         // 图标右上角：绿点=有窗口，灰点=后台运行，无点=未运行
         switch state {
