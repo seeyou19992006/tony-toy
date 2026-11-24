@@ -229,12 +229,7 @@ final class HotkeyRecorder: NSView {
     /// 按键才能落到本控件的本地事件监控里。
     ///
     ///     if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
-    ///
-    /// 想在状态切换时主动挂起/恢复 tap，可挂 `onRecordingChanged`。
     static var isRecording: Bool { activeRecorder != nil }
-
-    /// 录制开始/结束回调（true = 开始）。tap 侧可用它避免每次事件都查标志位。
-    static var onRecordingChanged: ((Bool) -> Void)?
 
     private static weak var activeRecorder: HotkeyRecorder?
 
@@ -266,7 +261,6 @@ final class HotkeyRecorder: NSView {
         }
         if Self.activeRecorder === self {
             Self.activeRecorder = nil
-            Self.onRecordingChanged?(false)
         }
     }
 
@@ -355,7 +349,6 @@ final class HotkeyRecorder: NSView {
         specBeforeRecording = spec
         pendingModifiers = []
         Self.activeRecorder = self
-        Self.onRecordingChanged?(true)
         window?.makeFirstResponder(self)
         installMonitor()
         needsDisplay = true
@@ -366,7 +359,6 @@ final class HotkeyRecorder: NSView {
         guard isRecording else { return }
         removeMonitor()
         Self.activeRecorder = nil
-        Self.onRecordingChanged?(false)
         pendingModifiers = []
         needsDisplay = true
     }
