@@ -410,19 +410,62 @@ func testFeatureProtocolDefaults() {
         var defaultEnabled: Bool { false }
         private(set) var started = false
         private(set) var stopped = false
+        private(set) var appliedValues: [FeatureConfig] = []
+
         func start() { started = true }
         func stop() { stopped = true }
+        func applyValues(_ config: FeatureConfig) { appliedValues.append(config) }
     }
 
     let feature = StubFeature()
 
-    // 默认 apply 实现：isEnabled 为 true 启动，false 停止
-    feature.apply(FeatureConfig(isEnabled: true))
+    // 开关打开：先启动，再应用 values
+    feature.apply(FeatureConfig(isEnabled: true, values: ["pageSize": .int(8)]))
     assertTrue(feature.started, "isEnabled = true 应调用 start()")
+    assertTrue(feature.appliedValues.count == 1, "开启时应调用 applyValues 一次")
+    assertTrue(
+        feature.appliedValues.first?.values["pageSize"] == .int(8),
+        "applyValues 应收到完整配置")
 
-    feature.apply(FeatureConfig(isEnabled: false))
+    // 开关关闭：只停止，不应用 values
+    feature.apply(FeatureConfig(isEnabled: false, values: ["pageSize": .int(4)]))
     assertTrue(feature.stopped, "isEnabled = false 应调用 stop()")
+    assertTrue(
+        feature.appliedValues.count == 1,
+        "关闭时不应调用 applyValues（停止后再应用配置没有意义）")
     print("testFeatureProtocolDefaults passed")
+}
+
+func testTemplateApplyCannotBeBypassed() {
+    // 即使某个 Feature 错误地覆盖了 apply，通过协议调用仍走模板方法。
+    // 这是模板方法模式的核心保护——调用方只持有 Feature 协议类型。
+    final class RogueFeature: Feature {
+        let id = "rogue"
+        let title = "越权"
+        let icon = "exclamationmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool { true }
+        private(set) var started = false
+
+        func start() { started = true }
+        func stop() {}
+
+        /// 故意覆盖 apply 但不做启停（模拟「忘记调默认实现」）
+        func apply(_ config: FeatureConfig) {
+            // 什么都不做
+        }
+    }
+
+    let rogue = RogueFeature()
+    let asProtocol: Feature = rogue
+
+    // 通过协议调用：扩展的模板方法优先（静态派发到扩展）
+    asProtocol.apply(FeatureConfig(isEnabled: true))
+    assertTrue(
+        rogue.started,
+        "通过协议调用应走扩展的模板方法，即使具体类型覆盖了 apply")
+
+    print("testTemplateApplyCannotBeBypassed passed")
 }
 
 @main
@@ -446,6 +489,7 @@ struct ConfigStoreTests {
         testMigratorKeepsLegacyFilesWhenSaveFails()
         testFeatureDefaultEnabledDeclaredByFeature()
         testFeatureProtocolDefaults()
+        testTemplateApplyCannotBeBypassed()
         print("ConfigStoreTests all passed")
     }
 }
