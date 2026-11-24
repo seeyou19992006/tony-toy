@@ -43,7 +43,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        hidesOnDeactivate = false
+        // 失焦即隐藏（Spotlight / Alfred 的行为）。这样不存在
+        // 「面板可见但收不到按键」的状态，也就不需要全局 tap 兜底。
+        hidesOnDeactivate = true
         // 不要硬编码 appearance——那会覆盖 `NSApp.appearance`，
         // 让设置里的「主题」对启动器/切换器失效。留空即继承应用外观。
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -363,52 +365,62 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        dbg("doCommandBy \(commandSelector)")
         switch commandSelector {
         case #selector(NSResponder.moveUp(_:)):
             moveSelection(by: -1)
             return true
+
         case #selector(NSResponder.moveDown(_:)):
             moveSelection(by: 1)
             return true
+
         case #selector(NSResponder.insertNewline(_:)):
             executeSelected()
             return true
+
+        case #selector(NSResponder.cancelOperation(_:)):
+            // Esc：关面板。必须在本地处理——之前靠一个全局 tap 兜底，
+            // 那个 tap 是误判「Esc 失效 = 焦点问题」的产物，真因是
+            // Caps 层映射残留，跟焦点无关。
+            closePanel()
+            return true
+
+        // 左右键：光标还能动就让 field editor 自己处理（返回 false），
+        // 到两端才翻页。
+        case #selector(NSResponder.moveLeft(_:)):
+            guard atStartOfInput() else { return false }
+            changePage(by: -1)
+            return true
+
+        case #selector(NSResponder.moveRight(_:)):
+            guard atEndOfInput() else { return false }
+            changePage(by: 1)
+            return true
+
         default:
             return false
         }
     }
 
-    /// 全局 tap 转发进来的按键；返回 true 表示已处理、应吞掉
-    func handlePanelKey(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        guard isVisible else { return false }
-
-        // ⌘1-⌘8 页内快速执行
-        if flags.contains(.maskCommand),
-           let number = numberKey(from: keyCode), number >= 1, number <= pageSize {
-            executePageRow(number - 1)
-            return true
-        }
-
-        // 左右键：光标还能动就让输入框处理，到两端才翻页
-        if flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty {
-            if keyCode == 123, atStartOfInput() {
-                changePage(by: -1)
-                return true
-            }
-            if keyCode == 124, atEndOfInput() {
-                changePage(by: 1)
-                return true
-            }
-        }
-        return false
+    /// 面板自己是 first responder 时的 Esc（搜索框有焦点时走上面的 doCommandBy）
+    override func cancelOperation(_ sender: Any?) {
+        closePanel()
     }
 
-    /// 数字键 1-9 的键码
-    private func numberKey(from keyCode: Int64) -> Int? {
-        let map: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
-                                 22: 6, 26: 7, 28: 8, 25: 9]
-        return map[keyCode]
+    /// ⌘1–⌘8：执行当前页对应项。
+    ///
+    /// 用 `performKeyEquivalent` 而不是 `keyDown`：带 ⌘ 的组合键会先走这里，
+    /// 而且是窗口级的，不依赖搜索框焦点。直接解析字符比维护键码映射表可靠。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+            let chars = event.charactersIgnoringModifiers,
+            let digit = Int(chars),
+            digit >= 1, digit <= pageSize, isVisible
+        {
+            executePageRow(digit - 1)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     private func atStartOfInput() -> Bool {

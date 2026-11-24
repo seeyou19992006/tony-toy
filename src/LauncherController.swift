@@ -7,7 +7,6 @@ final class LauncherController {
     private let index = AppIndex()
     private let activator = Activator()
     private let hotkey = LauncherHotkeyManager()
-    private let panelKeys = LauncherPanelKeys()
     private var palette: PaletteWindow?
 
     /// 当前热键。启动时用 `LauncherSettings` 的旧预设兜底，
@@ -32,7 +31,6 @@ final class LauncherController {
             self?.activator.activate(entry)
         }
 
-        panelKeys.start()
 
         registerHotkey()
     }
@@ -68,7 +66,6 @@ final class LauncherController {
         palette?.orderOut(nil)
         palette = nil
         hotkey.unregister()
-        panelKeys.stop()
         isStarted = false
         dbg("launcher stopped")
     }
@@ -79,16 +76,6 @@ final class LauncherController {
         } else {
             stop()
         }
-    }
-
-    /// 面板当前是否可见，供 Caps 层判断是否放行 Esc
-    var isPanelVisible: Bool {
-        palette?.isVisible ?? false
-    }
-
-    /// 把按键交给面板处理；返回 true 表示已消费
-    func handlePanelKey(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        palette?.handlePanelKey(keyCode: keyCode, flags: flags) ?? false
     }
 
     func show() {
