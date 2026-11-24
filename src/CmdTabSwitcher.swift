@@ -67,6 +67,14 @@ final class CmdTabSwitcher {
             return Unmanaged.passUnretained(event)
         }
 
+        // 配置窗口正在录制快捷键：放行所有按键。
+        //
+        // 别的 tap 都有这一句，唯独这里漏了。漏掉的后果很隐蔽：
+        // `isActive` 残留为 true 时，下面的导航分支会吞掉 Esc / Return /
+        // 方向键 / EDSF，其他键走 `default` 放行——表现出来就是
+        // 「⌘A 能录、⌘Esc 录不进去」，很容易被误判成录制器的问题。
+        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
+
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
@@ -84,6 +92,16 @@ final class CmdTabSwitcher {
                 }
             }
             return nil
+        }
+
+        // 兜底：⌘ 已经松开但 isActive 还挂着。
+        //
+        // 事件流中断（切到别的应用、tap 被系统临时禁用）会丢 flagsChanged，
+        // isActive 永远停在 true，之后每次按 Esc / 方向键都会被上面的
+        // 导航分支吞掉——这是「快捷键时而失灵」的根源。
+        if isActive, type == .keyDown, !flags.contains(.maskCommand) {
+            isActive = false
+            DispatchQueue.main.async { SwitcherController.shared.cancel() }
         }
 
         // 松开 ⌘：执行选中项
