@@ -7,12 +7,7 @@ import AppKit
 /// 用 `wantsUpdateLayer` + `updateLayer` 而不是在 `init` 里设一次，
 /// 否则切主题后只有窗口框架变、遮罩还是旧颜色。
 final class AppearanceAwareTintView: NSView {
-    /// 遮罩不透明度。亮色主题下毛玻璃本身够亮，压淡一点保证文字可读；
-    /// 深色主题下压浓一点，避免背景透太多。
-    private let dimAlpha: CGFloat
-
-    init(dimAlpha: CGFloat = 0.75) {
-        self.dimAlpha = dimAlpha
+    init() {
         super.init(frame: .zero)
     }
 
@@ -24,9 +19,18 @@ final class AppearanceAwareTintView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.windowBackgroundColor
-            .withAlphaComponent(dimAlpha)
-            .cgColor
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+
+        // 两套主题的诉求相反，必须分开调：
+        //  - 深色：压暗毛玻璃，否则背后窗口透上来、白字对比度不够
+        //  - 浅色：`windowBackgroundColor` 在浅色下是 #ECECEC 这种近白，
+        //    再叠高不透明度就成了一块白板。用明显更深的灰（#DBDBDB）
+        //    加中等不透明度，让毛玻璃纹理和背后内容透出来，
+        //    接近系统 Spotlight / ⌘Tab 那种「半透明灰片」的观感。
+        let white: CGFloat = isDark ? 0.08 : 0.86
+        let alpha: CGFloat = isDark ? 0.86 : 0.60
+
+        layer?.backgroundColor = NSColor(white: white, alpha: alpha).cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -41,10 +45,7 @@ final class AppearanceAwareTintView: NSView {
 /// 和 `AppearanceAwareTintView` 同样的理由：`layer.borderColor` 是
 /// `CGColor` 快照，必须每次外观变化重设。
 final class AppearanceAwareBorderView: NSView {
-    private let borderAlpha: CGFloat
-
-    init(borderAlpha: CGFloat = 0.25) {
-        self.borderAlpha = borderAlpha
+    init() {
         super.init(frame: .zero)
     }
 
@@ -56,9 +57,7 @@ final class AppearanceAwareBorderView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.borderColor = NSColor.separatorColor
-            .withAlphaComponent(borderAlpha)
-            .cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {

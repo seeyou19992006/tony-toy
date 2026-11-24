@@ -52,7 +52,8 @@ final class SwitcherTile: NSView {
         highlight.layer?.backgroundColor = isSelected
             ? NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1).cgColor
             : NSColor.clear.cgColor
-        nameLabel.textColor = isSelected ? .labelColor : .secondaryLabelColor
+        // 选中格子是深青色高亮，文字转白保证对比度
+        nameLabel.textColor = isSelected ? .white : .secondaryLabelColor
     }
 
 }

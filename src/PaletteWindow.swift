@@ -570,9 +570,11 @@ final class ResultCell: NSTableCellView {
         pathLabel.stringValue = path
         shortcutLabel.stringValue = shortcut
         iconView.image = icon
-        nameLabel.textColor = .labelColor
-        pathLabel.textColor = selected ? .secondaryLabelColor : .tertiaryLabelColor
-        shortcutLabel.textColor = selected ? .secondaryLabelColor : .tertiaryLabelColor
+        // 选中行是深青色高亮，文字必须转白——否则深色文字压在深青上看不清
+        nameLabel.textColor = selected ? .white : .labelColor
+        pathLabel.textColor = selected ? NSColor.white.withAlphaComponent(0.8) : .secondaryLabelColor
+        shortcutLabel.textColor =
+            selected ? NSColor.white.withAlphaComponent(0.7) : .tertiaryLabelColor
 
         // 图标右上角：绿点=有窗口，灰点=后台运行，无点=未运行
         switch state {
