@@ -286,7 +286,12 @@ func testUpdateFeatureNotifiesAndPersists() {
     try! store.save(initial)
 
     var received: TonyToyConfig?
-    store.onChange = { received = $0 }
+    var diskStateDuringCallback: TonyToyConfig?
+    store.onChange = { config in
+        received = config
+        // 在回调内部读盘：如果实现是「先通知后落盘」，这里读到的还是旧值
+        diskStateDuringCallback = try? store.load()
+    }
 
     try! store.updateFeature(FeatureID.gamepad) { feature in
         feature.isEnabled = false
@@ -297,11 +302,46 @@ func testUpdateFeatureNotifiesAndPersists() {
     assertTrue(
         received?.general.showMenuBarIcon == false,
         "未触碰的字段应保留，不能被整份覆盖")
-
-    // 回调触发时磁盘应该已经是新值
-    let onDisk = try! store.load()
-    assertTrue(onDisk.isEnabled(FeatureID.gamepad) == false, "回调前应已落盘")
+    assertTrue(
+        diskStateDuringCallback?.isEnabled(FeatureID.gamepad) == false,
+        "回调触发时磁盘应已是新值（验证 save 在 onChange 之前）")
     print("testUpdateFeatureNotifiesAndPersists passed")
+}
+
+func testMigratorImportsUserDefaults() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 用独立 suite，不污染真实 UserDefaults
+    let suiteName = "tonytoy-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    // 显式设置三个：两个旧默认关闭的 + 一个旧默认开启的
+    defaults.set(false, forKey: "menu.isCmdTabEnabled")
+    defaults.set(true, forKey: "menu.isCapsEnabled")
+    defaults.set(true, forKey: "menu.isMouseFollowEnabled")
+    // menu.isVolumeEnabled 不设，验证「未设置不创建节点」
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store, defaults: defaults)
+    let result = try! migrator.migrateIfNeeded()
+
+    assertTrue(
+        result.config.isEnabled(FeatureID.switcher) == false,
+        "⌘Tab 接管的旧默认是关闭")
+    assertTrue(
+        result.config.isEnabled(FeatureID.capsLayer) == true,
+        "Caps 层旧默认是开启")
+    assertTrue(
+        result.config.features[FeatureID.switcher]?.values["mouseFollow"] == .bool(true),
+        "鼠标跟随应迁到 switcher.values.mouseFollow")
+    assertTrue(
+        result.config.features[FeatureID.mouseLayer] == nil,
+        "未设置的 menu.isVolumeEnabled 不应创建节点")
+    print("testMigratorImportsUserDefaults passed")
 }
 
 @main
@@ -321,6 +361,7 @@ struct ConfigStoreTests {
         testMigratorPreservesActivationButton()
         testMigratorRenamesLegacyFilesAndIsIdempotent()
         testUpdateFeatureNotifiesAndPersists()
+        testMigratorImportsUserDefaults()
         print("ConfigStoreTests all passed")
     }
 }
