@@ -398,6 +398,38 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         dismiss(restoreFocus: true)
     }
 
+    /// 全局 tap 转发进来的按键；返回 true 表示已处理、应吞掉
+    func handlePanelKey(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        guard isVisible else { return false }
+
+        // ⌘1-⌘8 页内快速执行
+        if flags.contains(.maskCommand),
+           let number = numberKey(from: keyCode), number >= 1, number <= pageSize {
+            executePageRow(number - 1)
+            return true
+        }
+
+        // 左右键：光标还能动就让输入框处理，到两端才翻页
+        if flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty {
+            if keyCode == 123, atStartOfInput() {
+                changePage(by: -1)
+                return true
+            }
+            if keyCode == 124, atEndOfInput() {
+                changePage(by: 1)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 数字键 1-9 的键码
+    private func numberKey(from keyCode: Int64) -> Int? {
+        let map: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
+                                 22: 6, 26: 7, 28: 8, 25: 9]
+        return map[keyCode]
+    }
+
     private func atStartOfInput() -> Bool {
         guard let editor = searchField.currentEditor() else { return true }
         let range = editor.selectedRange

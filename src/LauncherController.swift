@@ -37,6 +37,11 @@ final class LauncherController {
         palette?.isVisible ?? false
     }
 
+    /// 把按键交给面板处理；返回 true 表示已消费
+    func handlePanelKey(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        palette?.handlePanelKey(keyCode: keyCode, flags: flags) ?? false
+    }
+
     func show() {
         dbg("launcher show called")
         if palette == nil {

@@ -52,13 +52,21 @@ final class LauncherEscTap {
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard keyCode == 53, LauncherController.shared.isPanelVisible else {
+        guard LauncherController.shared.isPanelVisible else {
             return Unmanaged.passUnretained(event)
         }
 
-        DispatchQueue.main.async {
-            LauncherController.shared.cancelSwitcher()
+        // Esc：关闭面板
+        if keyCode == 53 {
+            DispatchQueue.main.async {
+                LauncherController.shared.cancelSwitcher()
+            }
+            return nil
         }
-        return nil
+
+        // 其余按键（左右翻页、⌘1-8）交给面板判断，未处理就放行给输入框。
+        // tap 回调本身就跑在主线程，直接调用即可，不能用 main.sync 否则死锁。
+        let handled = LauncherController.shared.handlePanelKey(keyCode: keyCode, flags: event.flags)
+        return handled ? nil : Unmanaged.passUnretained(event)
     }
 }
