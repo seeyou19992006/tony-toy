@@ -2156,19 +2156,174 @@ git commit -m "feat(ui): 新增配置窗口（侧边栏导航）与九个空分�
 
 ---
 
-### Task 9: 接入托盘菜单
+### Task 9: 接入托盘菜单 + 配置只读模式
 
 **Files:**
-- Modify: `src/main.swift`
+- Modify: `src/Core/ConfigStore.swift`（只读模式）
+- Modify: `src/Core/FeatureRegistry.swift`（区分 futureVersion）
+- Modify: `src/main.swift`（「设置…」菜单 + 版本告警）
+- Modify: `tests/ConfigStoreTests.swift`（补只读测试）
 
-- [ ] **Step 1: 查看现有菜单构建位置**
+**本任务兑现最后一个审查遗留项**
 
-Run: `grep -n "buildMenu\|statusItem.menu\|NSMenu()" src/main.swift | head -10`
-Expected: 找到菜单构建方法（约在 `main.swift:160-220`）
+Task 6 审查发现：`startAll()` 用 `(try? store.load()) ?? .default` 吞掉了 `futureVersion`。今天不丢数据（`updateFeature` / `ConfigMigrator` 都会透传错误），但 Task 7+ 一旦出现「整份 save」路径，内存里的 `.default` 就会把新版本配置**整份覆盖写回**。
 
-- [ ] **Step 2: 添加「设置…」菜单项**
+版本检查只挡住了 `load`，没挡住 `save`。本任务补上只读模式。
 
-在 `src/main.swift` 的 AppDelegate 里新增属性：
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testConfigStoreReadOnlyRejectsSave() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 先写一份正常配置
+    var config = TonyToyConfig.default
+    config.general.theme = .dark
+    try! store.save(config)
+
+    // 进入只读
+    store.isReadOnly = true
+
+    var thrown: ConfigError?
+    do {
+        var mutated = config
+        mutated.general.theme = .light
+        try store.save(mutated)
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    assertTrue(thrown == .readOnly, "只读模式下 save 应抛 readOnly")
+
+    // 磁盘内容必须没变
+    let onDisk = try! ConfigStore(fileURL: fileURL).load()
+    assertTrue(onDisk.general.theme == .dark, "只读模式下不能改写磁盘")
+    print("testConfigStoreReadOnlyRejectsSave passed")
+}
+
+func testRegistryRecordsFutureVersionIssue() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    final class SpyFeature: Feature {
+        let id = "spy"
+        let title = "探针"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = true
+        private(set) var startCount = 0
+        func start() { startCount += 1 }
+        func stop() {}
+    }
+
+    let store = ConfigStore(fileURL: fileURL)
+    let registry = FeatureRegistry(store: store)
+    let spy = SpyFeature()
+    registry.register(spy)
+
+    registry.startAll()
+
+    // 版本过高：不能启动任何功能（跑了也是错的默认值）
+    assertTrue(spy.startCount == 0, "版本过高时不应启动任何功能")
+    assertTrue(
+        registry.loadIssue == .futureVersion(999),
+        "应记录 futureVersion，实际: \(String(describing: registry.loadIssue))")
+    assertTrue(store.isReadOnly, "版本过高时 store 应进入只读模式")
+    print("testRegistryRecordsFutureVersionIssue passed")
+}
+```
+
+在 `ConfigStoreTests.main()` 里追加两个调用。
+
+- [ ] **Step 2: 给 `ConfigStore` 加只读模式**
+
+在 `src/Core/ConfigStore.swift` 的 `ConfigError` 里加一个 case：
+
+```swift
+enum ConfigError: Error, Equatable {
+    /// 配置文件由更新版本的应用写过
+    case futureVersion(Int)
+    /// 配置处于只读模式（版本过高），拒绝写入以免覆盖新版本数据
+    case readOnly
+}
+```
+
+在 `ConfigStore` 里加属性：
+
+```swift
+    /// 只读模式。配置文件版本高于本应用时置为 true——
+    /// 此时任何 save 都会被拒绝，避免旧版本把新版本配置整份覆盖写回。
+    var isReadOnly = false
+```
+
+在 `save(_:)` 开头加：
+
+```swift
+    func save(_ config: TonyToyConfig) throws {
+        guard !isReadOnly else {
+            dbg("配置处于只读模式，拒绝写入")
+            throw ConfigError.readOnly
+        }
+        // ... 原有实现
+    }
+```
+
+- [ ] **Step 3: 给 `FeatureRegistry` 记录加载错误**
+
+在 `FeatureRegistry` 里加：
+
+```swift
+    /// 启动时加载配置遇到的错误（目前只有 futureVersion）。
+    /// 非 nil 时应用应显示告警，且不再写入配置。
+    private(set) var loadIssue: ConfigError?
+```
+
+把 `startAll()` 改成：
+
+```swift
+    func startAll() {
+        do {
+            let config = try store.load()
+            applyAll(normalizedConfig(config))
+        } catch let error as ConfigError {
+            // 版本高于本应用：不能跑默认值（那是错的配置），
+            // 也不能写入（会覆盖新版本数据）。记录问题，由界面提示用户。
+            loadIssue = error
+            store.isReadOnly = true
+            dbg("配置加载失败，功能未启动: \(error)")
+        } catch {
+            // 其它错误不该出现（load 内部已兜底），保底跑默认值
+            dbg("配置加载意外失败，使用默认值: \(error)")
+            applyAll(normalizedConfig(.default))
+        }
+
+        // 配置外部变更时热更新
+        store.onChange = { [weak self] newConfig in
+            self?.applyAll(newConfig)
+        }
+    }
+```
+
+- [ ] **Step 4: 接入托盘菜单**
+
+在 `src/main.swift` 的 AppDelegate 里新增属性（放在其他 controller 附近）：
 
 ```swift
     private lazy var settingsWindowController = SettingsWindowController()
@@ -2192,21 +2347,67 @@ Expected: 找到菜单构建方法（约在 `main.swift:160-220`）
     }
 ```
 
-- [ ] **Step 3: 编译验证**
+- [ ] **Step 5: 版本告警**
 
-Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -5`
-Expected: 输出 `✅ 构建成功:`
+在 `applicationDidFinishLaunching` 里，`FeatureRegistry.shared.startAll()` **之后**加：
 
-- [ ] **Step 4: 手工验证**
+```swift
+        // 配置由更新版本写过：功能全部未启动，且不写入配置。
+        // 静默跑默认值会让用户以为「设置丢了」，必须明确告知。
+        if let issue = FeatureRegistry.shared.loadIssue,
+            case .futureVersion(let version) = issue
+        {
+            let alert = NSAlert()
+            alert.messageText = "配置由更新版本写入"
+            alert.informativeText = """
+                config.json 的版本（\(version)）高于当前应用支持的版本（\(TonyToyConfig.currentVersion)）。
 
-Run: 安装后点托盘菜单 → 「设置…」（或按 `⌘,`）
-Expected: 弹出配置窗口，9 个分区可切换
+                为避免覆盖高版本配置，本次没有加载任何功能，也不会写入配置文件。
+                请升级 TonyToy，或备份后手动处理 ~/.config/tony-toy/config.json。
+                """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "打开配置文件夹")
+            alert.addButton(withTitle: "知道了")
 
-- [ ] **Step 5: 提交**
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(ConfigStore.defaultURL.deletingLastPathComponent())
+            }
+        }
+```
+
+> **注意**：`runModal()` 会阻塞主线程直到用户点击。启动时弹一次可以接受（这是严重错误状态）；如果你想非阻塞，改成 `beginSheetModal` 或通知。**说明你的选择。**
+
+- [ ] **Step 6: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && ./scripts/build.sh 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 7: 手工验证**
+
+Run:
+```bash
+./scripts/build.sh
+osascript -e 'quit app "TonyToy"'; sleep 2
+sudo rm -rf /Applications/TonyToy.app
+sudo ditto dist/build/TonyToy.app /Applications/TonyToy.app
+sudo chown -R "$(id -u):$(id -g)" /Applications/TonyToy.app
+open /Applications/TonyToy.app
+```
+
+- [ ] 点托盘菜单 → 「设置…」（或按 `⌘,`）能打开配置窗口
+- [ ] 9 个分区都能切换
+- [ ] 现有功能（`⌥D` 启动器、`⌘Tab` 切换器、Caps 层、密码管理器）**行为与重构前一致**
+
+- [ ] **Step 8: 变异测试**
+
+- 删掉 `save` 里的 `guard !isReadOnly` → `testConfigStoreReadOnlyRejectsSave` 应失败
+- `startAll` 的 `catch let error as ConfigError` 改回 `?? .default` → `testRegistryRecordsFutureVersionIssue` 应失败
+
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/main.swift
-git commit -m "feat: 托盘菜单新增「设置…」入口"
+git add src/Core/ConfigStore.swift src/Core/FeatureRegistry.swift src/main.swift tests/ConfigStoreTests.swift
+git commit -m "feat: 托盘菜单新增设置入口，配置版本过高时进入只读并告警"
 ```
 
 ---
