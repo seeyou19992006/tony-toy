@@ -218,60 +218,65 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
     }
 
+    /// 往菜单加一个功能总开关。
+    ///
+    /// 5 个开关的构建逻辑完全一样，只有标题/id/action 不同——
+    /// 抽出来避免每加一个功能就复制 3 行还容易写错 id。
+    private func addToggle(to menu: NSMenu, title: String, featureID: String, action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.state = isEnabled(featureID) ? .on : .off
+        menu.addItem(item)
+    }
+
     private func buildMenu() {
         let menu = NSMenu()
 
-        // 增加版本显示 (不可点击)
+        // MARK: 标题
+
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1"
         let versionItem = NSMenuItem(title: "TonyToy v\(version)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
+
         menu.addItem(NSMenuItem.separator())
 
-        // 打开配置窗口。放在版本号之后，与下面的功能开关分组隔开。
+        // MARK: 功能入口（点开，不是开关）
+
+        let launcherItem = NSMenuItem(
+            title: "应用启动器 (\(LauncherSettings.selectedHotkey.title))",
+            action: #selector(showLauncher), keyEquivalent: "")
+        menu.addItem(launcherItem)
+
+        let pwdItem = NSMenuItem(
+            title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
+        menu.addItem(pwdItem)
+
         let settingsItem = NSMenuItem(
             title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(settingsItem)
-        menu.addItem(NSMenuItem.separator())
-
-        let volItem = NSMenuItem(title: "鼠标侧键层", action: #selector(toggleVolume), keyEquivalent: "")
-        volItem.state = isEnabled(FeatureID.mouseLayer) ? .on : .off
-        menu.addItem(volItem)
-
-        let capsItem = NSMenuItem(title: "Caps 键层", action: #selector(toggleCaps), keyEquivalent: "")
-        capsItem.state = isEnabled(FeatureID.capsLayer) ? .on : .off
-        menu.addItem(capsItem)
-
-        let hotkeyItem = NSMenuItem(title: "全局快捷键层", action: #selector(toggleHotkeys), keyEquivalent: "")
-        hotkeyItem.state = isEnabled(FeatureID.hotkeyLayer) ? .on : .off
-        menu.addItem(hotkeyItem)
-
-        let cmdTabItem = NSMenuItem(title: "⌘Tab 接管", action: #selector(toggleCmdTab), keyEquivalent: "")
-        cmdTabItem.state = isEnabled(FeatureID.switcher) ? .on : .off
-        menu.addItem(cmdTabItem)
-
-        let mouseFollowItem = NSMenuItem(title: "切换时鼠标移到窗口中心",
-                                         action: #selector(toggleMouseFollow), keyEquivalent: "")
-        let mouseFollowOn = config.features[FeatureID.switcher]?.values["mouseFollow"] == .bool(true)
-        mouseFollowItem.state = mouseFollowOn ? .on : .off
-        menu.addItem(mouseFollowItem)
 
         menu.addItem(NSMenuItem.separator())
-        
-        // 这是「打开窗口」的动作项，不是开关，不要带勾选
-        let pwdItem = NSMenuItem(title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
-        menu.addItem(pwdItem)
 
-        let launcherItem = NSMenuItem(title: "应用启动器 (\(LauncherSettings.selectedHotkey.title))",
-                                      action: #selector(showLauncher), keyEquivalent: "")
-        menu.addItem(launcherItem)
+        // MARK: 功能总开关
+        //
+        // 只放「启用/禁用某个功能」这一层。功能内部的子选项
+        // （如切换器行数、鼠标跟随、启动器每页项数）统一在设置窗口里管，
+        // 避免托盘菜单变成无底洞。
 
-        let gamepadItem = NSMenuItem(title: "Switch Home 拉起 MacDeck（未运行时）",
-                                     action: #selector(toggleGamepadHome), keyEquivalent: "")
-        gamepadItem.state = isEnabled(FeatureID.gamepad) ? .on : .off
-        menu.addItem(gamepadItem)
+        addToggle(to: menu, title: "鼠标侧键层", featureID: FeatureID.mouseLayer,
+                  action: #selector(toggleVolume))
+        addToggle(to: menu, title: "Caps 键层", featureID: FeatureID.capsLayer,
+                  action: #selector(toggleCaps))
+        addToggle(to: menu, title: "全局快捷键层", featureID: FeatureID.hotkeyLayer,
+                  action: #selector(toggleHotkeys))
+        addToggle(to: menu, title: "⌘Tab 接管", featureID: FeatureID.switcher,
+                  action: #selector(toggleCmdTab))
+        addToggle(to: menu, title: "Switch Home 拉起 MacDeck", featureID: FeatureID.gamepad,
+                  action: #selector(toggleGamepadHome))
 
         menu.addItem(NSMenuItem.separator())
+
+        // MARK: 应用操作
 
         let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
         restartItem.target = self
@@ -279,7 +284,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                     accessibilityDescription: "重启")
         menu.addItem(restartItem)
 
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(
+            NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem?.menu = menu
     }
@@ -316,19 +322,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.arguments = ["-c", "sleep 0.6; /usr/bin/open -n '\''\(path)'\''"]
         try? process.run()
         NSApp.terminate(nil)
-    }
-
-    /// 鼠标跟随是切换器的子选项，不是独立功能——
-    /// 存到 `features.switcher.values.mouseFollow`，切换器下次弹出生效。
-    @objc private func toggleMouseFollow() {
-        var featureConfig = config.features[FeatureID.switcher] ?? FeatureConfig()
-        let current = featureConfig.values["mouseFollow"] == .bool(true)
-        featureConfig.values["mouseFollow"] = .bool(!current)
-        config.features[FeatureID.switcher] = featureConfig
-
-        switcherFeature?.applyValues(featureConfig)
-        try? configStore.save(config)
-        buildMenu()
     }
 
     @objc private func toggleCmdTab() { setFeatureEnabled(FeatureID.switcher) }
