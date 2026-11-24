@@ -12,6 +12,7 @@
 - `scripts/build.sh` 用 `find src -type f -name '*.swift'` 收集源文件，**新建子目录无需改构建脚本**。
 - 测试用 `swiftc` 手动列文件编译后直接运行，新测试文件**必须**加到 `tests/run_all.sh`。
 - **测试文件不能用顶层语句**：`swiftc` 多文件编译只允许 `main.swift` 有顶层代码。所有测试入口必须写成 `@main struct XXXTests { static func main() { ... } }`，与 `tests/MenuStateStoreTests.swift` 一致。
+- **JSONValue 的已知限制**：`init(from:)` 按 Bool → Int → Double 顺序探测，所以整数值的 double（如 `1.0`）编码后解码回来会变成 `.int(1)`。**测试里不要用整数值的 double 做往返断言**，用 `3.14` 这类真小数。若将来某个 Feature 需要严格区分 int/double，需要改探测策略（用 `NSNumber` 判断），本阶段不处理。
 - 项目没有第三方依赖，不要引入 SPM。
 
 ---
@@ -105,10 +106,15 @@ func assertTrue(_ condition: Bool, _ message: String) {
     }
 }
 
-testJSONValueRoundTrip()
-testJSONValueFromBareJSON()
-testJSONValueAccessors()
-print("JSONValueTests all passed")
+@main
+struct JSONValueTests {
+    static func main() {
+        testJSONValueRoundTrip()
+        testJSONValueFromBareJSON()
+        testJSONValueAccessors()
+        print("JSONValueTests all passed")
+    }
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
