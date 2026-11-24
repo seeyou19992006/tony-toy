@@ -344,6 +344,41 @@ func testMigratorImportsUserDefaults() {
     print("testMigratorImportsUserDefaults passed")
 }
 
+func testMigratorKeepsLegacyFilesWhenSaveFails() {
+    // 回归测试：save 失败时不能把旧文件改名。
+    // 如果先改名后落盘，save 抛错就会「迁移出空配置」——
+    // 旧文件全在 .migrated、config.json 不存在，下次启动迁移出空配置且永不再迁。
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let capsURL = tempDir.appendingPathComponent("caps-mappings.json")
+    try! #"{"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}"#.write(
+        to: capsURL, atomically: true, encoding: .utf8)
+
+    // 让 save 必然失败：/dev/null 下面无法建目录
+    let brokenStore = ConfigStore(fileURL: URL(fileURLWithPath: "/dev/null/config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: brokenStore)
+
+    var threw = false
+    do {
+        _ = try migrator.migrateIfNeeded()
+    } catch {
+        threw = true
+    }
+
+    assertTrue(threw, "save 失败时 migrateIfNeeded 应抛错")
+    assertTrue(
+        FileManager.default.fileExists(atPath: capsURL.path),
+        "save 失败时旧文件必须留在原路径，否则下次启动迁移出空配置")
+    assertTrue(
+        !FileManager.default.fileExists(
+            atPath: tempDir.appendingPathComponent("caps-mappings.json.migrated").path),
+        "save 失败时不应产生 .migrated 文件")
+    print("testMigratorKeepsLegacyFilesWhenSaveFails passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
@@ -362,6 +397,7 @@ struct ConfigStoreTests {
         testMigratorRenamesLegacyFilesAndIsIdempotent()
         testUpdateFeatureNotifiesAndPersists()
         testMigratorImportsUserDefaults()
+        testMigratorKeepsLegacyFilesWhenSaveFails()
         print("ConfigStoreTests all passed")
     }
 }
