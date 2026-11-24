@@ -10,11 +10,8 @@ struct HotkeyMappingEntry: Codable {
     let to: AppActionSpec
 }
 
-struct HotkeyKeySpec: Codable {
-    let key: String
-    let modifiers: [String]?
-}
-
+// `HotkeyKeySpec` 已下沉到 `src/Core/HotkeyKeySpec.swift`：
+// 配置层的 `SettingItem.hotkey` 也用它，而 Core 必须能脱离 AppKit 单独编译。
 struct HotkeyResolvedMapping {
     let sourceCode: Int64
     let sourceModifiers: CGEventFlags

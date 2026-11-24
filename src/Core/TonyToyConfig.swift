@@ -40,14 +40,16 @@ struct TonyToyConfig: Codable, Equatable {
             ?? [:]
     }
 
-    /// 读取某功能的开关状态。未配置过的功能默认启用。
+    /// 读取某功能的开关状态。
     ///
-    /// 注意：这不是所有功能的旧默认值——`switcher`（⌘Tab 接管）和
-    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭。默认值的最终归属
-    /// 应由各 Feature 自己声明（见 Task 5 的 `Feature` 协议），
-    /// 这里只是兜底。
-    func isEnabled(_ featureID: String) -> Bool {
-        features[featureID]?.isEnabled ?? true
+    /// - Parameters:
+    ///   - featureID: 功能的唯一标识
+    ///   - defaultEnabled: 未配置过时使用的默认值。
+    ///     **必须由 Feature 自己声明**——不是所有功能都默认开启。
+    ///     旧 `UserDefaults` 里 `switcher`（⌘Tab 接管）和 `mouseFollow`
+    ///     的默认是 `false`，硬编码 `true` 会改变这些功能的既有行为。
+    func isEnabled(_ featureID: String, defaultEnabled: Bool = true) -> Bool {
+        features[featureID]?.isEnabled ?? defaultEnabled
     }
 }
 

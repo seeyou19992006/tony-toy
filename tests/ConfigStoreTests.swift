@@ -379,6 +379,52 @@ func testMigratorKeepsLegacyFilesWhenSaveFails() {
     print("testMigratorKeepsLegacyFilesWhenSaveFails passed")
 }
 
+func testFeatureDefaultEnabledDeclaredByFeature() {
+    // 未配置过的功能应使用 Feature 自己声明的默认值，
+    // 而不是硬编码 true——switcher 和 mouseFollow 的旧默认是 false。
+    let config = TonyToyConfig.default
+
+    assertTrue(
+        config.isEnabled("switcher", defaultEnabled: false) == false,
+        "⌘Tab 接管旧默认关闭，未配置时应为 false")
+    assertTrue(
+        config.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "Caps 层旧默认开启")
+
+    // 已配置过的功能，配置值优先
+    var configured = config
+    configured.features["switcher"] = FeatureConfig(isEnabled: true, values: [:])
+    assertTrue(
+        configured.isEnabled("switcher", defaultEnabled: false) == true,
+        "配置值应优先于默认值")
+    print("testFeatureDefaultEnabledDeclaredByFeature passed")
+}
+
+func testFeatureProtocolDefaults() {
+    // 一个最小的 Feature 实现，验证协议默认实现
+    final class StubFeature: Feature {
+        let id = "stub"
+        let title = "桩"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool { false }
+        private(set) var started = false
+        private(set) var stopped = false
+        func start() { started = true }
+        func stop() { stopped = true }
+    }
+
+    let feature = StubFeature()
+
+    // 默认 apply 实现：isEnabled 为 true 启动，false 停止
+    feature.apply(FeatureConfig(isEnabled: true))
+    assertTrue(feature.started, "isEnabled = true 应调用 start()")
+
+    feature.apply(FeatureConfig(isEnabled: false))
+    assertTrue(feature.stopped, "isEnabled = false 应调用 stop()")
+    print("testFeatureProtocolDefaults passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
@@ -398,6 +444,8 @@ struct ConfigStoreTests {
         testUpdateFeatureNotifiesAndPersists()
         testMigratorImportsUserDefaults()
         testMigratorKeepsLegacyFilesWhenSaveFails()
+        testFeatureDefaultEnabledDeclaredByFeature()
+        testFeatureProtocolDefaults()
         print("ConfigStoreTests all passed")
     }
 }
