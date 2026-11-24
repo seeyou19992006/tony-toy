@@ -1,5 +1,14 @@
 import Foundation
 
+/// 配置加载错误。
+///
+/// 只有「配置文件版本高于本应用」会抛错——此时静默接受会让旧版本
+/// 把新版本的功能配置整份覆盖写回，造成数据丢失。
+enum ConfigError: Error, Equatable {
+    /// 配置文件由更新版本的应用写过
+    case futureVersion(Int)
+}
+
 /// 统一配置的读写入口。
 ///
 /// 设计要点：
@@ -27,10 +36,11 @@ final class ConfigStore {
         self.fileURL = fileURL
     }
 
-    /// 读取配置。文件不存在或损坏时返回默认值，保证启动永远不失败。
+    /// 读取配置。文件不存在或解析失败时返回默认值，保证启动不会因此失败。
     ///
-    /// 签名保留 `throws` 是为了将来版本迁移/校验真正需要上报错误时不必改调用方；
-    /// 当前实现不会抛错。如第一阶段结束仍无抛错场景，应降级为不抛错的方法。
+    /// **唯一例外**：配置文件版本高于本应用时抛 `ConfigError.futureVersion`。
+    /// 此时不备份、不改动文件——用户的数据必须原样保留，由调用方决定
+    /// 后续行为（提示升级 / 只读运行），绝不能静默重置后写回。
     func load() throws -> TonyToyConfig {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return .default
@@ -45,11 +55,20 @@ final class ConfigStore {
         }
 
         do {
-            return try JSONDecoder().decode(TonyToyConfig.self, from: data)
+            let config = try JSONDecoder().decode(TonyToyConfig.self, from: data)
+            // 版本高于本应用：不做任何修改（不备份、不覆盖），交给调用方处理
+            guard config.version <= TonyToyConfig.currentVersion else {
+                dbg(
+                    "配置版本 \(config.version) 高于本应用支持的 \(TonyToyConfig.currentVersion)，拒绝加载"
+                )
+                throw ConfigError.futureVersion(config.version)
+            }
+            return config
+        } catch let error as ConfigError {
+            // 必须排在通用 catch 前面：否则 futureVersion 会被当成解析失败，
+            // 进而备份并移走用户文件——那是数据丢失。
+            throw error
         } catch {
-            // TODO(Task 6): 这里只回退到默认值，空 features 直接进入运行时会丢掉
-            // 各功能的内置默认项。应改由 FeatureRegistry.startAll() 在启动时补齐全
-            // 部已注册 Feature 的默认项；Task 3 尚无法依赖它，故不在此引入。
             dbg("配置解析失败，已备份并回退默认值: \(error)")
             backupCorruptedFile()
             return .default

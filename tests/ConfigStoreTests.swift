@@ -468,6 +468,173 @@ func testTemplateApplyCannotBeBypassed() {
     print("testTemplateApplyCannotBeBypassed passed")
 }
 
+func testConfigStoreRejectsFutureVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 写一个未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: fileURL)
+
+    var thrown: ConfigError?
+    do {
+        _ = try store.load()
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    guard case .futureVersion(let version)? = thrown else {
+        assertTrue(false, "应抛 futureVersion，实际: \(String(describing: thrown))")
+        return
+    }
+    assertTrue(version == 999, "应带出实际版本号")
+
+    // 重要：不能备份也不能删除文件——用户的数据必须原样保留
+    assertTrue(
+        FileManager.default.fileExists(atPath: fileURL.path),
+        "版本过高时不能动用户文件")
+    print("testConfigStoreRejectsFutureVersion passed")
+}
+
+func testConfigStoreAcceptsCurrentVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+    try! store.save(.default)
+
+    // 当前版本必须能正常读
+    let config = try! store.load()
+    assertTrue(config.version == TonyToyConfig.currentVersion, "当前版本应可读")
+    print("testConfigStoreAcceptsCurrentVersion passed")
+}
+
+func testRegistryRegistersAndDeduplicates() {
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool
+        private(set) var appliedConfigs: [FeatureConfig] = []
+
+        init(id: String, defaultEnabled: Bool = true) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+        func applyValues(_ config: FeatureConfig) { appliedConfigs.append(config) }
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    let a = StubFeature(id: "alpha")
+    registry.register(a)
+    registry.register(StubFeature(id: "alpha"))  // 重复
+    registry.register(StubFeature(id: "beta"))
+
+    assertTrue(registry.allFeatures.count == 2, "重复 id 应被忽略")
+    print("testRegistryRegistersAndDeduplicates passed")
+}
+
+func testRegistryFillsDefaultEnabled() {
+    // 损坏回退后 features 为空，每个 Feature 应拿到自己声明的 defaultEnabled
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled: Bool
+
+        init(id: String, defaultEnabled: Bool) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    // 旧默认关闭的功能（switcher 类比）
+    registry.register(StubFeature(id: "switcher", defaultEnabled: false))
+    // 旧默认开启的功能（capsLayer 类比）
+    registry.register(StubFeature(id: "capsLayer", defaultEnabled: true))
+
+    // 空配置（模拟损坏回退）
+    let normalized = registry.normalizedConfig(TonyToyConfig.default)
+
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == false,
+        "旧默认关闭的功能补齐后仍为关闭")
+    assertTrue(
+        normalized.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "旧默认开启的功能补齐后为开启")
+    assertTrue(normalized.features.count == 2, "应补齐 2 个功能节点")
+    print("testRegistryFillsDefaultEnabled passed")
+}
+
+func testRegistryKeepsExistingConfig() {
+    // 已有配置不能被默认值覆盖
+    final class StubFeature: Feature {
+        let id = "switcher"
+        let title = "切换器"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = false
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+    registry.register(StubFeature())
+
+    var config = TonyToyConfig.default
+    config.features["switcher"] = FeatureConfig(isEnabled: true, values: ["k": .int(1)])
+
+    let normalized = registry.normalizedConfig(config)
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == true,
+        "已有配置优先于默认值，不能被覆盖")
+    assertTrue(
+        normalized.features["switcher"]?.values["k"] == .int(1),
+        "已有 values 应保留")
+    print("testRegistryKeepsExistingConfig passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
@@ -490,6 +657,11 @@ struct ConfigStoreTests {
         testFeatureDefaultEnabledDeclaredByFeature()
         testFeatureProtocolDefaults()
         testTemplateApplyCannotBeBypassed()
+        testConfigStoreRejectsFutureVersion()
+        testConfigStoreAcceptsCurrentVersion()
+        testRegistryRegistersAndDeduplicates()
+        testRegistryFillsDefaultEnabled()
+        testRegistryKeepsExistingConfig()
         print("ConfigStoreTests all passed")
     }
 }

@@ -28,6 +28,7 @@ swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
        "$REPO_ROOT/src/Core/ConfigMigrator.swift" \
        "$REPO_ROOT/src/Core/HotkeyKeySpec.swift" \
        "$REPO_ROOT/src/Core/Feature.swift" \
+       "$REPO_ROOT/src/Core/FeatureRegistry.swift" \
        "$REPO_ROOT/src/DebugLog.swift" \
        "$REPO_ROOT/tests/ConfigStoreTests.swift" \
        -o /tmp/config-tests
