@@ -10,10 +10,21 @@ final class LauncherController {
     private let escTap = LauncherEscTap()
     private var palette: PaletteWindow?
 
+    /// 当前热键。启动时用 `LauncherSettings` 的旧预设兜底，
+    /// 加载配置后由 `LauncherFeature.applyValues` 覆盖成 config.json 里的值。
+    private(set) var hotkeySpec = LauncherSettings.selectedHotkey
+
+    /// 菜单栏显示用的热键标题（如 `⌥ D`）
+    var hotkeyTitle: String { hotkeySpec.title }
+
+    /// 是否已启动。改热键时要判断——没启动就没热键可重注册。
+    private var isStarted = false
+
     private init() {}
 
     func start() {
         dbg("launcher start begin")
+        isStarted = true
         index.scan()
         dbg("launcher scan done entries=\(index.entries.count)")
 
@@ -23,12 +34,26 @@ final class LauncherController {
 
         escTap.start()
 
-        let registered = hotkey.register(LauncherSettings.selectedHotkey) { [weak self] in
+        registerHotkey()
+    }
+
+    /// 重新注册热键（改配置后调用）。
+    ///
+    /// `LauncherHotkeyManager.register` 内部会先 `unregister`，
+    /// 所以重复调用是安全的，不会残留旧热键。
+    func updateHotkey(_ spec: HotkeySpec) {
+        hotkeySpec = spec
+        guard isStarted else { return }
+        registerHotkey()
+    }
+
+    private func registerHotkey() {
+        let registered = hotkey.register(hotkeySpec) { [weak self] in
             self?.show()
         }
-        dbg("launcher hotkey registered=\(registered) key=\(LauncherSettings.selectedHotkey.title)")
+        dbg("launcher hotkey registered=\(registered) key=\(hotkeySpec.title)")
         if !registered {
-            NSLog("launcher hotkey register failed: \(LauncherSettings.selectedHotkey.title)")
+            NSLog("launcher hotkey register failed: \(hotkeySpec.title)")
         }
     }
 
@@ -41,6 +66,7 @@ final class LauncherController {
         palette = nil
         hotkey.unregister()
         escTap.stop()
+        isStarted = false
         dbg("launcher stopped")
     }
 

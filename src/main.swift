@@ -242,8 +242,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // MARK: 功能入口（点开，不是开关）
 
+        // 热键标题从配置读——用户在设置里改完，菜单要跟着变
+        let launcherHotkey = launcherFeature?.hotkeyTitle ?? LauncherSettings.selectedHotkey.title
         let launcherItem = NSMenuItem(
-            title: "应用启动器 (\(LauncherSettings.selectedHotkey.title))",
+            title: "应用启动器 (\(launcherHotkey))",
             action: #selector(showLauncher), keyEquivalent: "")
         menu.addItem(launcherItem)
 

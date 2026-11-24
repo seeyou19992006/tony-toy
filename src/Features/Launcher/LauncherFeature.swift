@@ -58,5 +58,60 @@ final class LauncherFeature: Feature {
     /// - `PaletteWindow.pageSize` / `maxRows` 是 private `let 8`，无法改；
     /// - 拼音匹配在 `AppIndex.search` 里是写死的，没有开关；
     /// - “显示无窗口应用”目前没有对应过滤逻辑，只有状态标记。
-    func applyValues(_ config: FeatureConfig) {}
+    /// 菜单栏显示用的热键标题（如 `⌥ D`）
+    var hotkeyTitle: String { controller.hotkeyTitle }
+
+    /// 从配置应用设置。
+    ///
+    /// 目前只有热键需要真正生效——其余三项（每页项数、拼音匹配、
+    /// 无窗口应用）还需要 `PaletteWindow` / `AppIndex` 暴露接口，
+    /// 等那两处改完再补（TODO 在各自的 setter 上）。
+    func applyValues(_ config: FeatureConfig) {
+        guard let keySpec = SettingsPaneViewController.decodeHotkey(config.values["hotkey"])
+        else { return }
+
+        guard let spec = Self.makeHotkeySpec(from: keySpec) else {
+            dbg("启动器热键无法解析: \(keySpec.key)")
+            return
+        }
+        controller.updateHotkey(spec)
+    }
+
+    // MARK: - 键名 → 键码
+
+    /// 把配置文件里的键名（`{key: "d", modifiers: ["option"]}`）
+    /// 转成 Carbon 热键需要的键码 + 修饰键掩码。
+    ///
+    /// 解析失败返回 nil——宁可不改也不注册一个错的键
+    /// （错键会占住别的快捷键）。
+    static func makeHotkeySpec(from keySpec: HotkeyKeySpec) -> HotkeySpec? {
+        guard let keyCode = KeyConfigSupport.keyCode(named: keySpec.key) else { return nil }
+
+        var modifiers: UInt32 = 0
+        for name in keySpec.modifiers ?? [] {
+            guard let flag = KeyConfigSupport.modifierFlag(named: name) else { continue }
+            modifiers |= UInt32(flag.rawValue)
+        }
+
+        return HotkeySpec(
+            keyCode: UInt32(keyCode),
+            modifiers: modifiers,
+            title: title(for: keySpec))
+    }
+
+    /// `{key: "d", modifiers: ["option"]}` → `⌥ D`
+    private static func title(for keySpec: HotkeyKeySpec) -> String {
+        let symbols: [String: String] = [
+            "control": "⌃", "option": "⌥", "shift": "⇧",
+            "command": "⌘", "fn": "fn",
+        ]
+        // 固定顺序，避免不同配置排出不同字符串
+        let order = ["control", "option", "shift", "command", "fn"]
+        let prefix =
+            order
+            .filter { (keySpec.modifiers ?? []).contains($0) }
+            .compactMap { symbols[$0] }
+            .joined()
+        return prefix.isEmpty ? keySpec.key.uppercased() : "\(prefix) \(keySpec.key.uppercased())"
+    }
 }
