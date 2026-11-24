@@ -68,6 +68,65 @@ func testConfigEmptyFeaturesByDefault() {
     print("testConfigEmptyFeaturesByDefault passed")
 }
 
+func testConfigStoreSaveAndLoad() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 首次加载：文件不存在，返回默认值
+    let initial = try! store.load()
+    assertTrue(initial == TonyToyConfig.default, "文件不存在时返回默认配置")
+
+    // 保存后重新加载
+    var config = initial
+    config.general.theme = .dark
+    config.features["gamepad"] = FeatureConfig(isEnabled: false)
+    try! store.save(config)
+
+    let reloaded = try! store.load()
+    assertTrue(reloaded.general.theme == .dark, "主题应落盘")
+    assertTrue(reloaded.isEnabled("gamepad") == false, "功能开关应落盘")
+    print("testConfigStoreSaveAndLoad passed")
+}
+
+func testConfigStoreCreatesDirectory() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 目录还不存在，save 应自动创建
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+    try! store.save(.default)
+
+    assertTrue(FileManager.default.fileExists(atPath: fileURL.path), "应自动创建父目录")
+    print("testConfigStoreCreatesDirectory passed")
+}
+
+func testConfigStoreCorruptedFile() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    try! "这不是 JSON".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: fileURL)
+    let config = try! store.load()
+    assertTrue(config == TonyToyConfig.default, "损坏的文件应回退到默认配置")
+
+    // 损坏文件应被备份，不静默丢弃
+    let backups = try! FileManager.default.contentsOfDirectory(atPath: tempDir.path)
+        .filter { $0.contains("corrupted") }
+    assertTrue(!backups.isEmpty, "损坏文件应备份为 .corrupted")
+    print("testConfigStoreCorruptedFile passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
@@ -77,6 +136,9 @@ struct ConfigStoreTests {
         testConfigToleratesMissingFields()
         testFeatureConfigToleratesMissingFields()
         testConfigEmptyFeaturesByDefault()
+        testConfigStoreSaveAndLoad()
+        testConfigStoreCreatesDirectory()
+        testConfigStoreCorruptedFile()
         print("ConfigStoreTests all passed")
     }
 }
