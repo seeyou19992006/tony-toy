@@ -12,8 +12,11 @@ final class CapsLayerPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("Caps 层映射"))
-        contentStack.addArrangedSubview(
-            makePlaceholder("Caps 层映射表将在第三阶段实现。"))
+        // 按 Feature 的 settings 声明自动生成控件——新增设置项只改
+        // Feature，不用动这里。
+        if let feature = FeatureRegistry.shared.feature(withID: FeatureID.capsLayer) {
+            buildSettings(for: feature)
+        }
+
     }
 }

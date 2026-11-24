@@ -12,8 +12,11 @@ final class GamepadPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("手柄 Home 键"))
-        contentStack.addArrangedSubview(
-            makePlaceholder("手柄 Home 键配置将在第五阶段实现。"))
+        // 按 Feature 的 settings 声明自动生成控件——新增设置项只改
+        // Feature，不用动这里。
+        if let feature = FeatureRegistry.shared.feature(withID: FeatureID.gamepad) {
+            buildSettings(for: feature)
+        }
+
     }
 }

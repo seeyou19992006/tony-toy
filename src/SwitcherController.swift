@@ -58,6 +58,19 @@ final class SwitcherController {
     private var cols = 1
     private var isShown = false
 
+    /// 切换器最大行数（配置项，默认 3）。
+    /// 网格按「竖向 x 行、横向 x+2 列」算，x 不超过这个上限。
+    var maxRows = 3
+
+    /// 切换后是否把鼠标移到目标窗口中心（配置项，默认关闭）。
+    var mouseFollow = false
+
+    /// 应用配置（配置窗口改了设置后调用，下次弹出生效）
+    func configure(maxRows: Int, mouseFollow: Bool) {
+        self.maxRows = min(max(1, maxRows), 5)
+        self.mouseFollow = mouseFollow
+    }
+
     private let activator = Activator()
 
     /// 最近使用的窗口，越靠前越新；用于「上一个窗口」的切换
@@ -108,7 +121,7 @@ final class SwitcherController {
         items = Self.buildItems()
         guard !items.isEmpty else { return }
 
-        (rows, cols) = Self.grid(for: items.count)
+        (rows, cols) = Self.grid(for: items.count, maxRows: maxRows)
         // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
         selected = items.count > 1 ? 1 : 0
         isShown = true
@@ -133,11 +146,13 @@ final class SwitcherController {
     }
 
     /// 竖向 x 行、横向 x+2 列，取最小的 x 容纳全部磁贴
-    static func grid(for count: Int) -> (rows: Int, cols: Int) {
+    static func grid(for count: Int, maxRows: Int = 3) -> (rows: Int, cols: Int) {
         guard count > 0 else { return (1, 3) }
         var x = 1
         while x * (x + 2) < count { x += 1 }
-        let cols = x + 2
+        // 行数不能超过配置上限，超了就把列数补回来
+        x = min(x, max(1, maxRows))
+        let cols = (count + x - 1) / x
         let rows = (count + cols - 1) / cols
         return (rows, cols)
     }
@@ -226,6 +241,9 @@ final class SwitcherController {
         // 面板还是 key 的时候激活，否则系统会拒绝
         activator.activate(target.entry)
         hide()
+
+        // 鼠标跟随是切换器的配置项，不再读全局 UserDefaults
+        Activator.mouseFollowEnabled = mouseFollow
 
         guard let element = target.window else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {

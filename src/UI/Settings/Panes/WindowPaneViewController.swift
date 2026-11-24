@@ -12,8 +12,11 @@ final class WindowPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("窗口切换与平铺"))
-        contentStack.addArrangedSubview(
-            makePlaceholder("⌘Tab 接管与窗口平铺配置将在第二阶段实现。"))
+        // 按 Feature 的 settings 声明自动生成控件——新增设置项只改
+        // Feature，不用动这里。
+        if let feature = FeatureRegistry.shared.feature(withID: FeatureID.switcher) {
+            buildSettings(for: feature)
+        }
+
     }
 }

@@ -12,8 +12,11 @@ final class LauncherPaneViewController: SettingsPaneViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentStack.addArrangedSubview(makeSectionTitle("应用启动器"))
-        contentStack.addArrangedSubview(
-            makePlaceholder("启动器设置将在第二阶段实现。"))
+        // 按 Feature 的 settings 声明自动生成控件——新增设置项只改
+        // Feature，不用动这里。
+        if let feature = FeatureRegistry.shared.feature(withID: FeatureID.launcher) {
+            buildSettings(for: feature)
+        }
+
     }
 }

@@ -32,6 +32,26 @@ final class LauncherController {
         }
     }
 
+    /// 停止：注销热键、停 Esc tap、释放面板。
+    ///
+    /// 之前没有这个方法，配置窗口里关不掉启动器。
+    func stop() {
+        // 先隐藏再释放，避免面板残留在屏幕上
+        palette?.orderOut(nil)
+        palette = nil
+        hotkey.unregister()
+        escTap.stop()
+        dbg("launcher stopped")
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        if enabled {
+            start()
+        } else {
+            stop()
+        }
+    }
+
     /// 面板当前是否可见，供 Caps 层判断是否放行 Esc
     var isPanelVisible: Bool {
         palette?.isVisible ?? false

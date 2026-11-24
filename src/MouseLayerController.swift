@@ -61,6 +61,10 @@ final class MouseLayerController {
     }
 
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // 配置窗口正在录制快捷键：放行所有按键，否则录制器收不到。
+        // 必须在任何 consume/改写之前判断。
+        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
+
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
@@ -102,6 +106,11 @@ final class MouseLayerController {
         }
 
         return Unmanaged.passUnretained(event)
+    }
+
+    /// 重新加载层配置（配置窗口改了映射后调用）。
+    func reload() {
+        reloadLayerConfig()
     }
 
     private func reloadLayerConfig() {

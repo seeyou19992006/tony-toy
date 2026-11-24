@@ -12,6 +12,18 @@ final class HotkeyMapperController {
         if enabled { start() } else { stop() }
     }
 
+    /// 重新加载映射表（配置窗口改了映射后调用）。
+    /// 不重建 event tap，避免短暂丢事件。
+    func reload() {
+        guard eventTap != nil else { return }
+        do {
+            mappings = try configStore.loadMappings()
+        } catch {
+            fputs("Failed to reload hotkey mappings: \(error)\n", stderr)
+            mappings = []
+        }
+    }
+
     private func start() {
         stop()
         do {
@@ -59,6 +71,10 @@ final class HotkeyMapperController {
     }
 
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // 配置窗口正在录制快捷键：放行所有按键，否则录制器收不到。
+        // 必须在任何 consume/改写之前判断。
+        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
+
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)

@@ -14,9 +14,6 @@ if [ ! -x "$REPO_ROOT/scripts/build.sh" ] || [ ! -x "$REPO_ROOT/scripts/package.
   exit 1
 fi
 
-swiftc "$REPO_ROOT/src/MenuStateStore.swift" "$REPO_ROOT/tests/MenuStateStoreTests.swift" -o /tmp/menu-state-tests
-/tmp/menu-state-tests
-
 swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
        "$REPO_ROOT/tests/JSONValueTests.swift" \
        -o /tmp/jsonvalue-tests

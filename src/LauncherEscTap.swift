@@ -44,6 +44,10 @@ final class LauncherEscTap {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // 配置窗口正在录制快捷键：放行所有按键，否则录制器收不到。
+        // 必须在任何 consume/改写之前判断。
+        if HotkeyRecorder.isRecording { return Unmanaged.passUnretained(event) }
+
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)

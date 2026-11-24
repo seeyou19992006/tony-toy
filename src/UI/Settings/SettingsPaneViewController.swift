@@ -115,3 +115,285 @@ class SettingsPaneViewController: NSViewController {
         return label
     }
 }
+
+// MARK: - 声明式设置项渲染
+
+extension SettingsPaneViewController {
+    /// 按 `Feature.settings` 自动生成控件。
+    ///
+    /// 每个 Pane 只需一行 `buildSettings(for: feature)`——新增设置项只改
+    /// Feature 的 `settings`，界面自动跟上。这是 Feature 化的核心收益：
+    /// 不用为每个功能手写一遍「标题 + 控件 + 读写绑定」。
+    func buildSettings(for feature: Feature) {
+        let config = (try? ConfigStore.shared.load()) ?? .default
+        let featureConfig = config.features[feature.id] ?? FeatureConfig()
+
+        for item in feature.settings {
+            if let row = makeRow(for: item, feature: feature, featureConfig: featureConfig) {
+                contentStack.addArrangedSubview(row)
+            }
+        }
+    }
+
+    // MARK: - 单项渲染
+
+    private func makeRow(
+        for item: SettingItem, feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView? {
+        switch item {
+        case .toggle(let key, let title, let defaultValue):
+            return makeToggleRow(key: key, title: title, defaultValue: defaultValue,
+                                 feature: feature, featureConfig: featureConfig)
+
+        case .hotkey(let key, let title, let defaultValue):
+            return makeHotkeyRow(key: key, title: title, defaultValue: defaultValue,
+                                 feature: feature, featureConfig: featureConfig)
+
+        case .number(let key, let title, let defaultValue, let range):
+            return makeNumberRow(key: key, title: title, defaultValue: defaultValue,
+                                 range: range, feature: feature, featureConfig: featureConfig)
+
+        case .picker(let key, let title, let options, let defaultValue):
+            return makePickerRow(key: key, title: title, options: options,
+                                 defaultValue: defaultValue, feature: feature,
+                                 featureConfig: featureConfig)
+
+        case .table(_, let title):
+            return makeTableRow(title: title, feature: feature, featureConfig: featureConfig)
+        }
+    }
+
+    // MARK: - 开关
+
+    private func makeToggleRow(
+        key: String, title: String, defaultValue: Bool,
+        feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView {
+        let toggle = NSSwitch()
+        toggle.controlSize = .small
+
+        // `enabled` 是功能总开关，存在 isEnabled；其余 toggle 存在 values 里
+        if key == "enabled" {
+            toggle.state = featureConfig.isEnabled ? .on : .off
+        } else if case .bool(let value)? = featureConfig.values[key] {
+            toggle.state = value ? .on : .off
+        } else {
+            toggle.state = defaultValue ? .on : .off
+        }
+
+        let target = ToggleTarget { [weak self] isOn in
+            self?.updateConfig(feature: feature) { config in
+                if key == "enabled" {
+                    config.isEnabled = isOn
+                } else {
+                    config.values[key] = .bool(isOn)
+                }
+            }
+        }
+        toggle.target = target
+        toggle.action = #selector(ToggleTarget.fire(_:))
+        // target 是 weak 的，必须强引用住
+        retainTarget(target)
+
+        return makeRow(title: title, control: toggle)
+    }
+
+    // MARK: - 快捷键
+
+    private func makeHotkeyRow(
+        key: String, title: String, defaultValue: HotkeyKeySpec,
+        feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView {
+        let recorder = HotkeyRecorder()
+        recorder.spec = Self.decodeHotkey(featureConfig.values[key]) ?? defaultValue
+        recorder.onChange = { [weak self] spec in
+            self?.updateConfig(feature: feature) { config in
+                config.values[key] = Self.encodeHotkey(spec)
+            }
+        }
+        return makeRow(title: title, control: recorder)
+    }
+
+    // MARK: - 数字
+
+    private func makeNumberRow(
+        key: String, title: String, defaultValue: Int, range: ClosedRange<Int>,
+        feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView {
+        let field = NSTextField(string: "")
+        field.formatter = NumberFormatter()
+        field.alignment = .right
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 52).isActive = true
+
+        let current: Int
+        if case .int(let value)? = featureConfig.values[key] {
+            current = value
+        } else {
+            current = defaultValue
+        }
+        field.integerValue = current
+
+        let target = NumberTarget(range: range) { [weak self] value in
+            self?.updateConfig(feature: feature) { config in
+                config.values[key] = .int(value)
+            }
+        }
+        field.target = target
+        field.action = #selector(NumberTarget.fire(_:))
+        retainTarget(target)
+
+        return makeRow(title: title, control: field)
+    }
+
+    // MARK: - 下拉
+
+    private func makePickerRow(
+        key: String, title: String, options: [(value: String, label: String)],
+        defaultValue: String, feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView {
+        let popup = NSPopUpButton()
+        popup.controlSize = .small
+        for option in options {
+            popup.addItem(withTitle: option.label)
+            popup.lastItem?.representedObject = option.value
+        }
+
+        let current: String
+        if case .string(let value)? = featureConfig.values[key] {
+            current = value
+        } else {
+            current = defaultValue
+        }
+        if let index = options.firstIndex(where: { $0.value == current }) {
+            popup.selectItem(at: index)
+        }
+
+        let target = PickerTarget { [weak self] value in
+            self?.updateConfig(feature: feature) { config in
+                config.values[key] = .string(value)
+            }
+        }
+        popup.target = target
+        popup.action = #selector(PickerTarget.fire(_:))
+        retainTarget(target)
+
+        return makeRow(title: title, control: popup)
+    }
+
+    // MARK: - 映射表
+
+    private func makeTableRow(
+        title: String, feature: Feature, featureConfig: FeatureConfig
+    ) -> NSView {
+        let style: MappingTableEditor.Style
+        switch feature.id {
+        case FeatureID.capsLayer: style = .capsLayer
+        case FeatureID.hotkeyLayer: style = .hotkeyLayer
+        default: style = .mouseLayer
+        }
+
+        let editor = MappingTableEditor(
+            style: style,
+            mappings: MappingTableEditor.mappings(from: featureConfig.values["mappings"]),
+            onChange: { [weak self] mappings in
+                self?.updateConfig(feature: feature) { config in
+                    config.values["mappings"] = .array(mappings)
+                }
+            }
+        )
+
+        let label = makeSectionTitle(title)
+        let stack = NSStackView(views: [label, editor])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        return stack
+    }
+
+    // MARK: - 读写
+
+    /// 改配置：写内存 → 落盘 → 通知 Feature 热更新
+    private func updateConfig(feature: Feature, _ mutate: (inout FeatureConfig) -> Void) {
+        let store = ConfigStore.shared
+        var config = (try? store.load()) ?? .default
+        var featureConfig = config.features[feature.id] ?? FeatureConfig()
+        mutate(&featureConfig)
+        config.features[feature.id] = featureConfig
+
+        feature.apply(featureConfig)
+        try? store.save(config)
+    }
+
+    // MARK: - 编解码
+
+    static func decodeHotkey(_ value: JSONValue?) -> HotkeyKeySpec? {
+        guard case .object(let dict)? = value,
+            case .string(let key)? = dict["key"]
+        else { return nil }
+        var modifiers: [String] = []
+        if case .array(let list)? = dict["modifiers"] {
+            modifiers = list.compactMap { item in
+                if case .string(let text) = item { return text }
+                return nil
+            }
+        }
+        return HotkeyKeySpec(key: key, modifiers: modifiers)
+    }
+
+    static func encodeHotkey(_ spec: HotkeyKeySpec?) -> JSONValue {
+        guard let spec else { return .null }
+        return .object([
+            "key": .string(spec.key),
+            "modifiers": .array((spec.modifiers ?? []).map { .string($0) }),
+        ])
+    }
+
+    // MARK: - target 保活
+
+    /// AppKit 的 target 是 weak 引用，闭包 target 必须自己强引用住，
+    /// 否则下次 GC 就成悬垂指针（点开关没反应）。
+    private func retainTarget(_ target: AnyObject) {
+        retainedTargets.append(target)
+    }
+
+    private var retainedTargets: [AnyObject] {
+        get { objc_getAssociatedObject(self, &Self.targetsKey) as? [AnyObject] ?? [] }
+        set { objc_setAssociatedObject(self, &Self.targetsKey, newValue, .OBJC_ASSOCIATION_RETAIN) }
+    }
+
+    private static var targetsKey: UInt8 = 0
+}
+
+// MARK: - 闭包 target
+
+/// `NSSwitch` / `NSTextField` / `NSPopUpButton` 的 target 必须是
+/// `@objc` 方法，用一个包装类承接闭包。
+private final class ToggleTarget: NSObject {
+    private let handler: (Bool) -> Void
+    init(_ handler: @escaping (Bool) -> Void) { self.handler = handler }
+    @objc func fire(_ sender: NSSwitch) { handler(sender.state == .on) }
+}
+
+private final class NumberTarget: NSObject {
+    private let range: ClosedRange<Int>
+    private let handler: (Int) -> Void
+    init(range: ClosedRange<Int>, _ handler: @escaping (Int) -> Void) {
+        self.range = range
+        self.handler = handler
+    }
+    @objc func fire(_ sender: NSTextField) {
+        let clamped = min(max(sender.integerValue, range.lowerBound), range.upperBound)
+        sender.integerValue = clamped
+        handler(clamped)
+    }
+}
+
+private final class PickerTarget: NSObject {
+    private let handler: (String) -> Void
+    init(_ handler: @escaping (String) -> Void) { self.handler = handler }
+    @objc func fire(_ sender: NSPopUpButton) {
+        guard let value = sender.selectedItem?.representedObject as? String else { return }
+        handler(value)
+    }
+}

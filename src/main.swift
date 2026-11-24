@@ -67,47 +67,90 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private static let macDeckBundleIdentifier = "com.sunxiaolong.macdeck"
 
     private var statusItem: NSStatusItem?
-    private let mouseLayerController = MouseLayerController()
-    private let hotkeyController = HotkeyMapperController()
-    private let capsController = CapsMapperController()
-    private let menuStateStore = MenuStateStore()
-    private let passwordManager = PasswordManagerWindow()
-    private let launcherController = LauncherController.shared
+
+    private let configStore = ConfigStore.shared
+    private let featureRegistry = FeatureRegistry.shared
+
+    /// 当前配置缓存。菜单开关状态从这里读，避免每次点菜单都读盘。
+    private var config: TonyToyConfig = .default
+
     /// 配置窗口。用 lazy 是为了不在启动时创建整套 AppKit 视图——
     /// 大多数用户一次也不会打开设置，没必要为此拖慢冷启动。
     private lazy var settingsWindowController = SettingsWindowController()
-    private let cmdTabSwitcher = CmdTabSwitcher()
-    /// 手柄 Home 是独立输入源，用自己的执行器，不掺进键鼠那几条链路
-    private let gamepadActionExecutor = AppActionExecutor()
-    private let homeKeyBridge = HomeKeyBridge.shared
     private var isHotkeyHandlerInstalled = false  // 防止重复安装 handler
 
-    private var isVolumeEnabled = true
-    private var isHotkeyEnabled = true
-    private var isCmdTabEnabled = true
-    private var isMouseFollowEnabled = false
-    private var isCapsEnabled = true
-    private var isGamepadHomeEnabled = true
+    // MARK: - 功能访问
+
+    private func feature(_ id: String) -> Feature? {
+        featureRegistry.feature(withID: id)
+    }
+
+    private var volumeFeature: MouseLayerFeature? {
+        feature(FeatureID.mouseLayer) as? MouseLayerFeature
+    }
+
+    private var capsFeature: CapsLayerFeature? {
+        feature(FeatureID.capsLayer) as? CapsLayerFeature
+    }
+
+    private var hotkeyFeature: HotkeyLayerFeature? {
+        feature(FeatureID.hotkeyLayer) as? HotkeyLayerFeature
+    }
+
+    private var switcherFeature: SwitcherFeature? {
+        feature(FeatureID.switcher) as? SwitcherFeature
+    }
+
+    private var launcherFeature: LauncherFeature? {
+        feature(FeatureID.launcher) as? LauncherFeature
+    }
+
+    private var passwordFeature: PasswordVaultFeature? {
+        feature(FeatureID.passwordVault) as? PasswordVaultFeature
+    }
+
+    private var gamepadFeature: GamepadFeature? {
+        feature(FeatureID.gamepad) as? GamepadFeature
+    }
+
+    /// 读某功能的开关状态（未配置时用 Feature 自己声明的默认值）
+    private func isEnabled(_ id: String) -> Bool {
+        config.features[id]?.isEnabled ?? feature(id)?.defaultEnabled ?? true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         dbg("=== launch pid=\(getpid()) ===")
-        let persistedState = menuStateStore.load()
-        isVolumeEnabled = persistedState.isVolumeEnabled
-        isCapsEnabled = persistedState.isCapsEnabled
-        isHotkeyEnabled = persistedState.isHotkeyEnabled
-        isCmdTabEnabled = persistedState.isCmdTabEnabled
-        isMouseFollowEnabled = persistedState.isMouseFollowEnabled
-        isGamepadHomeEnabled = persistedState.isGamepadHomeEnabled
 
         // 1. 申请辅助功能权限 (Accessibility)
         checkAccessibility()
 
         NSApp.setActivationPolicy(.accessory)
-        setupStatusItem()
 
-        // 统一配置的加载入口。当前还没有 Feature 注册进来，所以这里只做
-        // 「读配置 + 版本检查」；后续把功能接进 Registry 后无需再改这里。
-        FeatureRegistry.shared.startAll()
+        // 2. 注册所有功能。顺序即侧边栏显示顺序。
+        registerFeatures()
+
+        // 3. 首次启动：把 4 个旧配置文件迁移到统一的 config.json。
+        //    旧文件保留为 .migrated，迁移出错时用户能恢复。
+        //    必须在 startAll 之前——先迁移再加载，否则读到的是空配置。
+        let configDirectory = ConfigStore.defaultURL.deletingLastPathComponent()
+        let migrator = ConfigMigrator(directory: configDirectory, store: configStore)
+        if let result = try? migrator.migrateIfNeeded(), result.didMigrate {
+            dbg("已迁移 \(result.migratedFeatureCount) 个功能节点到 config.json")
+        }
+
+        // 4. 加载配置并启动功能（内部做版本检查 + 默认值补齐 + 热更新接线）
+        featureRegistry.startAll()
+        config = (try? configStore.load()) ?? .default
+
+        // 5. 应用主题（重启后恢复）
+        ThemeApplier.apply(config.general.theme)
+
+        // 6. 音量变化时更新菜单栏提示
+        volumeFeature?.onVolumeChanged = { [weak self] volume in
+            self?.statusItem?.button?.toolTip = "音量 \(Int((volume * 100).rounded()))%"
+        }
+
+        setupStatusItem()
 
         // 配置由更新版本写过：功能全部未启动，且不写入配置。
         // 静默跑默认值会让用户以为「设置丢了」，必须明确告知。
@@ -135,46 +178,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        mouseLayerController.onVolumeChanged = { [weak self] volume in
-            // 图标固定为魔方，音量改为悬停提示
-            self?.statusItem?.button?.toolTip = "音量 \(Int((volume * 100).rounded()))%"
-        }
-
-        // 初始启动
-        mouseLayerController.setEnabled(isVolumeEnabled)
-        hotkeyController.setEnabled(isHotkeyEnabled)
-        capsController.setEnabled(isCapsEnabled)
-        
-        // 注册密码管理器快捷键 (Cmd+Shift+V)
+        // 7. 密码管理器的全局热键（Carbon，与 Feature 的启停无关）
         registerPasswordManagerHotkey()
 
-        // 启动应用启动器 (⌥D)
-        launcherController.start()
-        // 接管 ⌘Tab
-        if isCmdTabEnabled {
-            cmdTabSwitcher.start()
-        }
-
-        // 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
+        // 8. 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()
-
-        // 手柄 Home 键：MacDeck 在跑就让它自己翻，没跑就拉起来并直接展开大屏
-        homeKeyBridge.onHomePressed = { [weak self] in
-            guard let self else { return }
-            self.gamepadActionExecutor.dispatch(
-                .ensureApplicationRunning(bundleIdentifier: Self.macDeckBundleIdentifier))
-        }
-        homeKeyBridge.setEnabled(isGamepadHomeEnabled)
-        homeKeyBridge.start()
-
     }
     
+    /// 注册所有功能。新增功能只需在这里加一行。
+    private func registerFeatures() {
+        featureRegistry.register(CapsLayerFeature())
+        featureRegistry.register(HotkeyLayerFeature())
+        featureRegistry.register(MouseLayerFeature())
+        featureRegistry.register(SwitcherFeature())
+        featureRegistry.register(LauncherFeature())
+        featureRegistry.register(PasswordVaultFeature())
+        featureRegistry.register(GamepadFeature())
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // 确保退出时清理映射
-        homeKeyBridge.stop()
-        capsController.setEnabled(false)
-        hotkeyController.setEnabled(false)
-        mouseLayerController.setEnabled(false)
+        // 确保退出时注销所有 tap、释放资源
+        featureRegistry.stopAll()
     }
 
     private func checkAccessibility() {
@@ -211,24 +235,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let volItem = NSMenuItem(title: "鼠标侧键层", action: #selector(toggleVolume), keyEquivalent: "")
-        volItem.state = isVolumeEnabled ? .on : .off
+        volItem.state = isEnabled(FeatureID.mouseLayer) ? .on : .off
         menu.addItem(volItem)
 
         let capsItem = NSMenuItem(title: "Caps 键层", action: #selector(toggleCaps), keyEquivalent: "")
-        capsItem.state = isCapsEnabled ? .on : .off
+        capsItem.state = isEnabled(FeatureID.capsLayer) ? .on : .off
         menu.addItem(capsItem)
 
         let hotkeyItem = NSMenuItem(title: "全局快捷键层", action: #selector(toggleHotkeys), keyEquivalent: "")
-        hotkeyItem.state = isHotkeyEnabled ? .on : .off
+        hotkeyItem.state = isEnabled(FeatureID.hotkeyLayer) ? .on : .off
         menu.addItem(hotkeyItem)
 
         let cmdTabItem = NSMenuItem(title: "⌘Tab 接管", action: #selector(toggleCmdTab), keyEquivalent: "")
-        cmdTabItem.state = isCmdTabEnabled ? .on : .off
+        cmdTabItem.state = isEnabled(FeatureID.switcher) ? .on : .off
         menu.addItem(cmdTabItem)
 
         let mouseFollowItem = NSMenuItem(title: "切换时鼠标移到窗口中心",
                                          action: #selector(toggleMouseFollow), keyEquivalent: "")
-        mouseFollowItem.state = isMouseFollowEnabled ? .on : .off
+        let mouseFollowOn = config.features[FeatureID.switcher]?.values["mouseFollow"] == .bool(true)
+        mouseFollowItem.state = mouseFollowOn ? .on : .off
         menu.addItem(mouseFollowItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -243,7 +268,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let gamepadItem = NSMenuItem(title: "Switch Home 拉起 MacDeck（未运行时）",
                                      action: #selector(toggleGamepadHome), keyEquivalent: "")
-        gamepadItem.state = isGamepadHomeEnabled ? .on : .off
+        gamepadItem.state = isEnabled(FeatureID.gamepad) ? .on : .off
         menu.addItem(gamepadItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -259,31 +284,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    @objc private func toggleVolume() {
-        isVolumeEnabled.toggle()
-        mouseLayerController.setEnabled(isVolumeEnabled)
-        persistMenuState()
-        buildMenu()
-    }
+    // MARK: - 开关动作
+    //
+    // 统一走 `setFeatureEnabled`：改内存 → 落盘 → 通知 Feature 热更新。
+    // 不要直接调 controller.setEnabled——Feature 才是配置的持有者，
+    // 绕过它会和配置窗口的状态打架。
 
-    @objc private func toggleCaps() {
-        isCapsEnabled.toggle()
-        capsController.setEnabled(isCapsEnabled)
-        persistMenuState()
-        buildMenu()
-    }
+    @objc private func toggleVolume() { setFeatureEnabled(FeatureID.mouseLayer) }
+    @objc private func toggleCaps() { setFeatureEnabled(FeatureID.capsLayer) }
+    @objc private func toggleHotkeys() { setFeatureEnabled(FeatureID.hotkeyLayer) }
+    @objc private func toggleGamepadHome() { setFeatureEnabled(FeatureID.gamepad) }
 
-    @objc private func toggleHotkeys() {
-        isHotkeyEnabled.toggle()
-        hotkeyController.setEnabled(isHotkeyEnabled)
-        persistMenuState()
-        buildMenu()
-    }
+    /// 切换某功能的开关并立即生效
+    private func setFeatureEnabled(_ id: String) {
+        guard let feature = feature(id) else { return }
 
-    @objc private func toggleGamepadHome() {
-        isGamepadHomeEnabled.toggle()
-        homeKeyBridge.setEnabled(isGamepadHomeEnabled)
-        persistMenuState()
+        var featureConfig = config.features[id] ?? FeatureConfig()
+        featureConfig.isEnabled.toggle()
+        config.features[id] = featureConfig
+
+        feature.apply(featureConfig)
+        try? configStore.save(config)
         buildMenu()
     }
     
@@ -297,45 +318,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    /// 鼠标跟随是切换器的子选项，不是独立功能——
+    /// 存到 `features.switcher.values.mouseFollow`，切换器下次弹出生效。
     @objc private func toggleMouseFollow() {
-        isMouseFollowEnabled.toggle()
-        persistMenuState()
+        var featureConfig = config.features[FeatureID.switcher] ?? FeatureConfig()
+        let current = featureConfig.values["mouseFollow"] == .bool(true)
+        featureConfig.values["mouseFollow"] = .bool(!current)
+        config.features[FeatureID.switcher] = featureConfig
+
+        switcherFeature?.applyValues(featureConfig)
+        try? configStore.save(config)
         buildMenu()
     }
 
-    @objc private func toggleCmdTab() {
-        isCmdTabEnabled.toggle()
-        if isCmdTabEnabled {
-            cmdTabSwitcher.start()
-        } else {
-            cmdTabSwitcher.stop()
-        }
-        persistMenuState()
-        buildMenu()
-    }
+    @objc private func toggleCmdTab() { setFeatureEnabled(FeatureID.switcher) }
 
     @objc private func showPasswordManager() {
-        if !passwordManager.isVisible {
-            // 记录当前前台应用，以便粘贴密码时恢复焦点
-            passwordManager.recordPreviousApp()
-
-            // 先激活应用，确保窗口能获得焦点
-            NSApp.activate(ignoringOtherApps: true)
-
-            // 检查是否已解锁
-            if !passwordManager.vaultService.isUnlocked {
-                passwordManager.showUnlockView()
-            } else {
-                passwordManager.showMainView()
-            }
-            passwordManager.makeKeyAndOrderFront(nil)
-        } else {
-            passwordManager.orderOut(nil)
-        }
+        passwordFeature?.toggle()
     }
-    
+
     @objc private func showLauncher() {
-        launcherController.show()
+        launcherFeature?.show()
     }
 
     @objc private func showSettings() {
@@ -397,18 +400,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func persistMenuState() {
-        menuStateStore.save(
-            MenuToggleState(
-                isVolumeEnabled: isVolumeEnabled,
-                isCapsEnabled: isCapsEnabled,
-                isHotkeyEnabled: isHotkeyEnabled,
-                isCmdTabEnabled: isCmdTabEnabled,
-                isMouseFollowEnabled: isMouseFollowEnabled,
-                isGamepadHomeEnabled: isGamepadHomeEnabled,
-            )
-        )
-    }
 }
 
 // tooltip 延迟 300ms（必须在 NSApplication.shared 之前注册）
