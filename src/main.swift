@@ -282,14 +282,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 放在这组里和重启/退出一起更符合直觉。
 
         // 热键标题从配置读——用户在设置里改完，菜单要跟着变
+        //
+        // 这几项都要给图标：菜单列是 [勾选位][图标位][标题]，
+        // 开关有勾号、重启/退出有图标，中间两项都没有时标题会被居中悬浮，
+        // 和上下都不对齐。
         let launcherHotkey = launcherFeature?.hotkeyTitle ?? LauncherSettings.selectedHotkey.title
         let launcherItem = NSMenuItem(
             title: "应用启动器 (\(launcherHotkey))",
             action: #selector(showLauncher), keyEquivalent: "")
+        launcherItem.image = NSImage(
+            systemSymbolName: "magnifyingglass", accessibilityDescription: "应用启动器")
         menu.addItem(launcherItem)
 
         let pwdItem = NSMenuItem(
             title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
+        pwdItem.image = NSImage(
+            systemSymbolName: "lock", accessibilityDescription: "密码管理器")
         menu.addItem(pwdItem)
 
         let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
