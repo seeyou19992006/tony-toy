@@ -44,7 +44,9 @@
 | Task 3 审查 | 补 `updateFeature` + `onChange` 测试：回调触发时磁盘已是新值、未触碰字段被保留 | Task 4 测试步骤 |
 | Task 3 审查 | 兑现 `load() throws` 决策：引入真实抛错场景（版本不兼容/迁移失败），或降级为不抛 | Task 6 验收 |
 | Task 3 审查 | **语义一致性**：设计文档写「`save()` → 落盘 → 通知 Feature」，但实现只有 `updateFeature` 触发 `onChange`。配置窗口保存必须走 `updateFeature`，或在 save 后显式广播，否则热更新静默失效 | Task 7-8 前拍板 |
-| Task 2 审查 | 默认值归属：`isEnabled` 的 `?? true` 对 `switcher`/`mouseFollow` 与旧默认相反（旧为 `false`）。应由 Feature 自己声明默认值 | Task 5 设计协议时裁决 |
+| Task 2 审查 | 默认值归属：`isEnabled` 的 `?? true` 对 `switcher`/`mouseFollow` 与旧默认相反（旧为 `false`）。应由 Feature 自己声明默认值 | ✅ Task 5 已落地（`defaultEnabled`） |
+| Task 6 审查 | **`startAll()` 用 `try?` 吞掉 `futureVersion`**：版本过高时静默跑默认值，语义不是「拒绝加载」。今天不丢数据（`updateFeature`/`ConfigMigrator` 都会透传错误），但 Task 7+ 一旦出现「整份 save」路径，内存里的 `.default` 会覆盖新版本配置 | **Task 9 必须**：`startAll()` 区分错误 + `ConfigStore` 只读模式 + 菜单栏告警 |
+| Task 6 审查 | `stopAll()` 无调用点、无测试——若第一阶段结束仍未接入退出流程，应删除而不是留死代码 | Task 9 |
 
 ---
 

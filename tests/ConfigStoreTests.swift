@@ -591,12 +591,14 @@ func testRegistryFillsDefaultEnabled() {
     // 空配置（模拟损坏回退）
     let normalized = registry.normalizedConfig(TonyToyConfig.default)
 
+    // 直接检查节点，不能只靠 isEnabled(_:defaultEnabled:)——
+    // 那个方法自身会回退到传入的默认值，完全不补齐时也能通过。
     assertTrue(
-        normalized.isEnabled("switcher", defaultEnabled: false) == false,
-        "旧默认关闭的功能补齐后仍为关闭")
+        normalized.features["switcher"]?.isEnabled == false,
+        "旧默认关闭的功能补齐后应写入 false")
     assertTrue(
-        normalized.isEnabled("capsLayer", defaultEnabled: true) == true,
-        "旧默认开启的功能补齐后为开启")
+        normalized.features["capsLayer"]?.isEnabled == true,
+        "旧默认开启的功能补齐后应写入 true")
     assertTrue(normalized.features.count == 2, "应补齐 2 个功能节点")
     print("testRegistryFillsDefaultEnabled passed")
 }
