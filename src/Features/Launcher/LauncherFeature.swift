@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import Foundation
 
 /// 应用启动器。
@@ -39,6 +40,13 @@ final class LauncherFeature: Feature {
     private var isStarted = false
 
     func start() {
+        // 启动前先用配置初始化热键，避免「先注册默认值再立刻改」
+        // 造成一次多余的 unregister/register。
+        if let config = try? ConfigStore.shared.load(),
+            let featureConfig = config.features[id]
+        {
+            applyValues(featureConfig)
+        }
         guard !isStarted else { return }
         controller.start()
         isStarted = true
@@ -90,13 +98,31 @@ final class LauncherFeature: Feature {
         var modifiers: UInt32 = 0
         for name in keySpec.modifiers ?? [] {
             guard let flag = KeyConfigSupport.modifierFlag(named: name) else { continue }
-            modifiers |= UInt32(flag.rawValue)
+            modifiers |= Self.carbonMask(from: flag)
         }
 
         return HotkeySpec(
             keyCode: UInt32(keyCode),
             modifiers: modifiers,
             title: title(for: keySpec))
+    }
+
+    /// `CGEventFlags` → Carbon 修饰键掩码。
+    ///
+    /// **两套位定义不同**，不能直接 `UInt32(flag.rawValue)`：
+    ///   - Carbon（`RegisterEventHotKey` 要的）：shift=0x0200,
+    ///     option=0x0800, control=0x1000, command=0x0100
+    ///   - `CGEventFlags`：maskShift=0x00020000, maskAlternate=0x00080000,
+    ///     maskControl=0x00040000, maskCommand=0x00100000
+    ///
+    /// 直接用 rawValue 会注册出完全错误的组合键（比如把 ⌥ 变成 ⌃）。
+    private static func carbonMask(from flag: CGEventFlags) -> UInt32 {
+        var result: UInt32 = 0
+        if flag.contains(.maskShift) { result |= UInt32(shiftKey) }
+        if flag.contains(.maskControl) { result |= UInt32(controlKey) }
+        if flag.contains(.maskAlternate) { result |= UInt32(optionKey) }
+        if flag.contains(.maskCommand) { result |= UInt32(cmdKey) }
+        return result
     }
 
     /// `{key: "d", modifiers: ["option"]}` → `⌥ D`

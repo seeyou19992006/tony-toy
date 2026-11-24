@@ -42,7 +42,10 @@ final class LauncherController {
     /// `LauncherHotkeyManager.register` 内部会先 `unregister`，
     /// 所以重复调用是安全的，不会残留旧热键。
     func updateHotkey(_ spec: HotkeySpec) {
+        // 值没变就不动，避免启动时多余的 unregister/register
+        guard spec != hotkeySpec else { return }
         hotkeySpec = spec
+        // 没启动时只更新值——`start()` 会用新值注册
         guard isStarted else { return }
         registerHotkey()
     }
