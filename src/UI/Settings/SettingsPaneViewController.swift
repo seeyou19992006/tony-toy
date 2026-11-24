@@ -55,7 +55,10 @@ class SettingsPaneViewController: NSViewController {
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+            // 用 contentView（NSClipView）而不是 scrollView：系统设置「始终显示
+            // 滚动条」时 clipView 比 scrollView 窄 17pt，用 scrollView 会让
+            // documentView 右侧 17pt 落到滚动条下面，最小窗口时控件被裁。
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
 
             contentStack.topAnchor.constraint(equalTo: documentView.topAnchor),
             contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
@@ -81,7 +84,8 @@ class SettingsPaneViewController: NSViewController {
         row.alignment = .centerY
         row.spacing = 12
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
+        // 不设宽度下限：窗口 minSize 已保证内容区最小 391pt，
+        // 硬编码 400 会在最小窗口下把右边距从 24 压到 15。
         return row
     }
 
