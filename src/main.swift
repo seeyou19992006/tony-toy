@@ -249,18 +249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // MARK: 功能入口（点开，不是开关）
-
-        // 热键标题从配置读——用户在设置里改完，菜单要跟着变
-        let launcherHotkey = launcherFeature?.hotkeyTitle ?? LauncherSettings.selectedHotkey.title
-        let launcherItem = NSMenuItem(
-            title: "应用启动器 (\(launcherHotkey))",
-            action: #selector(showLauncher), keyEquivalent: "")
-        menu.addItem(launcherItem)
-
-        let pwdItem = NSMenuItem(
-            title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
-        menu.addItem(pwdItem)
+        // MARK: 设置入口
 
         let settingsItem = NSMenuItem(
             title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
@@ -287,7 +276,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // MARK: 应用操作
+        // MARK: 窗口入口 + 应用操作
+        //
+        // 启动器和密码管理器都是「打开一个窗口」的动作，与上面的开关性质不同，
+        // 放在这组里和重启/退出一起更符合直觉。
+
+        // 热键标题从配置读——用户在设置里改完，菜单要跟着变
+        let launcherHotkey = launcherFeature?.hotkeyTitle ?? LauncherSettings.selectedHotkey.title
+        let launcherItem = NSMenuItem(
+            title: "应用启动器 (\(launcherHotkey))",
+            action: #selector(showLauncher), keyEquivalent: "")
+        menu.addItem(launcherItem)
+
+        let pwdItem = NSMenuItem(
+            title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
+        menu.addItem(pwdItem)
 
         let restartItem = NSMenuItem(title: "重启", action: #selector(restartApp), keyEquivalent: "")
         restartItem.target = self
