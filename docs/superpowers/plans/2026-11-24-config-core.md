@@ -1365,25 +1365,263 @@ git commit -m "feat(core): 新增 Feature 协议，默认值由功能自己声�
 
 **Files:**
 - Create: `src/Core/FeatureRegistry.swift`
+- Modify: `src/Core/ConfigStore.swift`（版本检查，兑现 `throws`）
+- Modify: `tests/ConfigStoreTests.swift`（补注册表 + 版本测试）
 
-- [ ] **Step 1: 实现注册表**
+**本任务兑现两个审查遗留项**
+
+| 来源 | 事项 | 落地方式 |
+|---|---|---|
+| Task 3 审查 | `load() throws` 是死签名（从不抛错） | 加版本检查：`config.version > currentVersion` 时抛 `ConfigError.futureVersion` |
+| Task 3 审查 | 损坏回退 `.default` 后 `features` 为空，应补齐已注册 Feature 的默认项 | `FeatureRegistry.normalizedConfig(_:)` |
+
+**版本检查的理由**：配置文件可能被更新版本的应用写过（用户降级、dotfiles 跨机器同步）。如果静默接受，新版本的功能配置会被旧版本整份覆盖写回，**数据丢失**。抛错让调用方决定（提示用户升级，或只读不写）。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testConfigStoreRejectsFutureVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 写一个未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: fileURL)
+
+    var thrown: ConfigError?
+    do {
+        _ = try store.load()
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    guard case .futureVersion(let version)? = thrown else {
+        assertTrue(false, "应抛 futureVersion，实际: \(String(describing: thrown))")
+        return
+    }
+    assertTrue(version == 999, "应带出实际版本号")
+
+    // 重要：不能备份也不能删除文件——用户的数据必须原样保留
+    assertTrue(
+        FileManager.default.fileExists(atPath: fileURL.path),
+        "版本过高时不能动用户文件")
+    print("testConfigStoreRejectsFutureVersion passed")
+}
+
+func testConfigStoreAcceptsCurrentVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+    try! store.save(.default)
+
+    // 当前版本必须能正常读
+    let config = try! store.load()
+    assertTrue(config.version == TonyToyConfig.currentVersion, "当前版本应可读")
+    print("testConfigStoreAcceptsCurrentVersion passed")
+}
+
+func testRegistryRegistersAndDeduplicates() {
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool
+        private(set) var appliedConfigs: [FeatureConfig] = []
+
+        init(id: String, defaultEnabled: Bool = true) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+        func applyValues(_ config: FeatureConfig) { appliedConfigs.append(config) }
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    let a = StubFeature(id: "alpha")
+    registry.register(a)
+    registry.register(StubFeature(id: "alpha"))  // 重复
+    registry.register(StubFeature(id: "beta"))
+
+    assertTrue(registry.allFeatures.count == 2, "重复 id 应被忽略")
+    print("testRegistryRegistersAndDeduplicates passed")
+}
+
+func testRegistryFillsDefaultEnabled() {
+    // 损坏回退后 features 为空，每个 Feature 应拿到自己声明的 defaultEnabled
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled: Bool
+
+        init(id: String, defaultEnabled: Bool) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    // 旧默认关闭的功能（switcher 类比）
+    registry.register(StubFeature(id: "switcher", defaultEnabled: false))
+    // 旧默认开启的功能（capsLayer 类比）
+    registry.register(StubFeature(id: "capsLayer", defaultEnabled: true))
+
+    // 空配置（模拟损坏回退）
+    let normalized = registry.normalizedConfig(TonyToyConfig.default)
+
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == false,
+        "旧默认关闭的功能补齐后仍为关闭")
+    assertTrue(
+        normalized.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "旧默认开启的功能补齐后为开启")
+    assertTrue(normalized.features.count == 2, "应补齐 2 个功能节点")
+    print("testRegistryFillsDefaultEnabled passed")
+}
+
+func testRegistryKeepsExistingConfig() {
+    // 已有配置不能被默认值覆盖
+    final class StubFeature: Feature {
+        let id = "switcher"
+        let title = "切换器"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = false
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+    registry.register(StubFeature())
+
+    var config = TonyToyConfig.default
+    config.features["switcher"] = FeatureConfig(isEnabled: true, values: ["k": .int(1)])
+
+    let normalized = registry.normalizedConfig(config)
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == true,
+        "已有配置优先于默认值，不能被覆盖")
+    assertTrue(
+        normalized.features["switcher"]?.values["k"] == .int(1),
+        "已有 values 应保留")
+    print("testRegistryKeepsExistingConfig passed")
+}
+```
+
+在 `ConfigStoreTests.main()` 里追加 5 个调用。
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `swiftc ... 2>&1 | head -5`
+Expected: FAIL（`cannot find type 'FeatureRegistry'` / `cannot find 'ConfigError'`）
+
+- [ ] **Step 3: 给 `ConfigStore.load()` 加版本检查**
+
+在 `src/Core/ConfigStore.swift` 里新增（文件顶部，import 之后）：
+
+```swift
+/// 配置加载错误。
+///
+/// 只有「配置文件版本高于本应用」会抛错——此时静默接受会让旧版本
+/// 把新版本的功能配置整份覆盖写回，造成数据丢失。
+enum ConfigError: Error, Equatable {
+    /// 配置文件由更新版本的应用写过
+    case futureVersion(Int)
+}
+```
+
+然后把 `load()` 里的 decode 段改成：
+
+```swift
+        do {
+            let config = try JSONDecoder().decode(TonyToyConfig.self, from: data)
+            // 版本高于本应用：不做任何修改（不备份、不覆盖），交给调用方处理
+            guard config.version <= TonyToyConfig.currentVersion else {
+                dbg(
+                    "配置版本 \(config.version) 高于本应用支持的 \(TonyToyConfig.currentVersion)，拒绝加载"
+                )
+                throw ConfigError.futureVersion(config.version)
+            }
+            return config
+        } catch let error as ConfigError {
+            throw error
+        } catch {
+            dbg("配置解析失败，已备份并回退默认值: \(error)")
+            backupCorruptedFile()
+            return .default
+        }
+```
+
+**关键**：`catch let error as ConfigError` 必须在前面，否则会被下面的 `catch` 吞掉并备份文件（用户数据就丢了）。
+
+- [ ] **Step 4: 实现 FeatureRegistry**
 
 创建 `src/Core/FeatureRegistry.swift`：
 
 ```swift
 import Foundation
 
-/// 功能注册表。应用启动时注册所有 Feature，
-/// 配置窗口和菜单都从这里读，避免各处硬编码。
+/// 功能注册表。
+///
+/// 应用启动时注册所有 `Feature`，配置窗口和菜单都从这里读，
+/// 避免各处硬编码——这是「新增功能只改 2 处」的那 2 处之一。
 final class FeatureRegistry {
     static let shared = FeatureRegistry()
 
     private var features: [Feature] = []
-    private let store = ConfigStore.shared
+    private let store: ConfigStore
 
-    private init() {}
+    init(store: ConfigStore = .shared) {
+        self.store = store
+    }
+
+    // MARK: - 注册
 
     /// 注册一个功能。按注册顺序显示在侧边栏。
+    ///
+    /// 重复 id 会被忽略并记录日志——静默追加会导致侧边栏出现两个同名条目。
     func register(_ feature: Feature) {
         guard !features.contains(where: { $0.id == feature.id }) else {
             dbg("功能 \(feature.id) 重复注册，已忽略")
@@ -1398,19 +1636,20 @@ final class FeatureRegistry {
         features.first { $0.id == id }
     }
 
-    /// 应用启动时调用：加载配置并启动所有启用的功能
+    // MARK: - 生命周期
+
+    /// 应用启动时调用：加载配置并启动所有启用的功能。
+    ///
+    /// 配置损坏回退 `.default` 后 `features` 为空，此时**必须**补齐
+    /// 每个已注册 Feature 的默认项——否则所有功能都会被当成「未配置」
+    /// 而拿到错误的默认状态。
     func startAll() {
         let config = (try? store.load()) ?? .default
-        for feature in features {
-            feature.apply(config.features[feature.id] ?? FeatureConfig())
-        }
+        applyAll(normalizedConfig(config))
 
         // 配置外部变更时热更新
         store.onChange = { [weak self] newConfig in
-            guard let self else { return }
-            for feature in self.features {
-                feature.apply(newConfig.features[feature.id] ?? FeatureConfig())
-            }
+            self?.applyAll(newConfig)
         }
     }
 
@@ -1420,19 +1659,52 @@ final class FeatureRegistry {
             feature.stop()
         }
     }
+
+    // MARK: - 内部
+
+    private func applyAll(_ config: TonyToyConfig) {
+        for feature in features {
+            feature.apply(config.features[feature.id] ?? FeatureConfig())
+        }
+    }
+
+    /// 补齐所有已注册 Feature 的默认项。
+    ///
+    /// 只补**缺失**的节点——已有配置优先，不能被默认值覆盖。
+    /// 内部可见（非 private）是为了让测试能直接验证补齐逻辑。
+    func normalizedConfig(_ config: TonyToyConfig) -> TonyToyConfig {
+        var result = config
+        for feature in features where result.features[feature.id] == nil {
+            result.features[feature.id] = FeatureConfig(isEnabled: feature.defaultEnabled)
+        }
+        return result
+    }
 }
 ```
 
-- [ ] **Step 2: 编译验证**
+- [ ] **Step 5: 运行测试确认通过**
 
-Run: `swiftc -parse src/Core/*.swift src/DebugLog.swift && echo "语法 OK"`
-Expected: 输出 `语法 OK`
+Run: 完整 swiftc 命令 + `/tmp/config-tests`
+Expected: 输出 `ConfigStoreTests all passed`（24 个测试全过）
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 6: 更新 `tests/run_all.sh`**，ConfigStore 编译块加上 `"$REPO_ROOT/src/Core/FeatureRegistry.swift" \`
+
+- [ ] **Step 7: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 8: 变异测试**
+
+- 删掉 `normalizedConfig` 的补齐循环 → `testRegistryFillsDefaultEnabled` 应失败
+- 把补齐改成无条件覆盖（去掉 `where result.features[feature.id] == nil`）→ `testRegistryKeepsExistingConfig` 应失败
+- 把 `catch let error as ConfigError` 删掉 → `testConfigStoreRejectsFutureVersion` 应失败（且用户文件被备份）
+
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/Core/FeatureRegistry.swift
-git commit -m "feat(core): 新增 FeatureRegistry 功能注册表"
+git add src/Core/FeatureRegistry.swift src/Core/ConfigStore.swift tests/ConfigStoreTests.swift tests/run_all.sh
+git commit -m "feat(core): 新增 FeatureRegistry，配置版本过高时拒绝加载"
 ```
 
 ---
