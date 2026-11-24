@@ -127,8 +127,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     // MARK: - 显示与关闭
 
-    func show(selecting initialRow: Int = 0) {
-        dbg("show() 被调用 initialRow=\(initialRow)")
+    func show() {
+        dbg("show() 被调用")
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // 调试用：--query 预填搜索词
@@ -139,16 +139,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             searchField.stringValue = ""
         }
         refresh()
-
-        // ⌘Tab 唤起时默认落在第二个：第一个通常是当前应用
-        if initialRow > 0, results.count > 1 {
-            selectedIndex = min(initialRow, results.count - 1)
-            currentPage = selectedIndex / pageSize
-            layoutWindow()
-            tableView.reloadData()
-            tableView.selectRowIndexes(IndexSet(integer: selectedIndex % pageSize),
-                                       byExtendingSelection: false)
-        }
 
         // 与密码管理器一致：强制激活，否则 borderless 面板收不到键盘
         NSApp.activate(ignoringOtherApps: true)
@@ -234,6 +224,11 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
                            width: screen.frame.width,
                            height: screen.frame.height)
         return frame.contains(cgPoint)
+    }
+
+    /// 关闭面板并把焦点还给之前的应用
+    func closePanel() {
+        dismiss(restoreFocus: true)
     }
 
     private func dismiss(restoreFocus: Bool) {
@@ -382,23 +377,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         default:
             return false
         }
-    }
-
-    // MARK: - ⌘Tab 切换器入口
-
-    func switcherMove(by delta: Int) {
-        guard isVisible else { return }
-        moveSelection(by: delta)
-    }
-
-    func switcherCommit() {
-        guard isVisible else { return }
-        executeSelected()
-    }
-
-    func switcherCancel() {
-        guard isVisible else { return }
-        dismiss(restoreFocus: true)
     }
 
     /// 全局 tap 转发进来的按键；返回 true 表示已处理、应吞掉

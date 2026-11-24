@@ -7,7 +7,7 @@ final class LauncherController {
     private let index = AppIndex()
     private let activator = Activator()
     private let hotkey = LauncherHotkeyManager()
-    private let escTap = LauncherEscTap()
+    private let panelKeys = LauncherPanelKeys()
     private var palette: PaletteWindow?
 
     /// 当前热键。启动时用 `LauncherSettings` 的旧预设兜底，
@@ -32,7 +32,7 @@ final class LauncherController {
             self?.activator.activate(entry)
         }
 
-        escTap.start()
+        panelKeys.start()
 
         registerHotkey()
     }
@@ -68,7 +68,7 @@ final class LauncherController {
         palette?.orderOut(nil)
         palette = nil
         hotkey.unregister()
-        escTap.stop()
+        panelKeys.stop()
         isStarted = false
         dbg("launcher stopped")
     }
@@ -103,23 +103,12 @@ final class LauncherController {
         index.scan()
     }
 
-    // MARK: - ⌘Tab 切换器
-
-    func beginSwitcher() {
-        if palette == nil { start() }
-        // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
-        palette?.show(selecting: 1)
-    }
-
-    func moveSwitcherSelection(by delta: Int) {
-        palette?.switcherMove(by: delta)
-    }
-
-    func commitSwitcher() {
-        palette?.switcherCommit()
-    }
-
-    func cancelSwitcher() {
-        palette?.switcherCancel()
+    /// 关闭面板（Esc 或点外部时调用）。
+    ///
+    /// 之前这里叫 `cancelSwitcher()`，是旧版「面板内切换器」的遗留——
+    /// 那个实现已被 `SwitcherController`（二维网格）取代，
+    /// 但方法名一直没改，读代码时容易误以为是切换器的入口。
+    func dismissPanel() {
+        palette?.closePanel()
     }
 }

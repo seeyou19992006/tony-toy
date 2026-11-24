@@ -1,12 +1,17 @@
 import Cocoa
 
-/// 面板可见期间全局接收按键。
+/// 启动器面板的按键接管。
 ///
-/// 面板可能因为别的应用抢焦点而失去键盘焦点，此时本地监听收不到按键，
-/// 这个 tap 保证只要面板还显示着，Esc 一定能关掉它、左右键一定能翻页。
+/// 面板是 `NSPanel`（`hidesOnDeactivate = false`）：用户点到别处时它仍在屏幕上，
+/// 但已经失去键盘焦点，本地事件监听收不到按键。这个 tap 保证只要面板还显示着：
+/// - `Esc` 一定能关掉它
+/// - `←`/`→` 一定能翻页（光标在输入框两端时）
+/// - `⌘1`–`⌘8` 一定能执行当前页对应项
 ///
-/// 创建/重试/禁用恢复/录制放行都由 `EventTap` 统一处理。
-final class LauncherEscTap {
+/// 与 `CmdTabSwitcher` 的分工：那个只管 ⌘Tab 会话（按住 ⌘ 期间的网格导航），
+/// 由「⌘Tab 接管」开关控制启停；这个只管面板自己的交互，跟随启动器启停。
+/// 两者不合并——否则关掉 ⌘Tab 接管会连带让面板收不到 Esc。
+final class LauncherPanelKeys {
     private lazy var tap = EventTap(
         name: "launcherPanel",
         events: .make([.keyDown])
@@ -25,13 +30,14 @@ final class LauncherEscTap {
     // MARK: - 事件处理
 
     private func handle(type: CGEventType, event: CGEvent) -> CGEvent? {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         guard LauncherController.shared.isPanelVisible else { return event }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
         // Esc：关闭面板
         if keyCode == 53 {
             DispatchQueue.main.async {
-                LauncherController.shared.cancelSwitcher()
+                LauncherController.shared.dismissPanel()
             }
             return nil
         }
