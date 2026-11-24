@@ -1282,22 +1282,29 @@ protocol Feature: AnyObject {
     /// 停止：注销 tap、释放资源
     func stop()
 
-    /// 配置变更后热更新。
+    /// 应用功能自己的配置值（映射表、每页项数等）。默认空实现。
     ///
-    /// 默认实现只按 `isEnabled` 启停；需要更细配置（如映射表）的
-    /// Feature 应覆盖它，先调 `super` 语义再处理自己的 values。
-    func apply(_ config: FeatureConfig)
+    /// 需要更细配置的 Feature 覆盖这个方法，**不要覆盖 `apply`**——
+    /// `apply` 是模板方法，保证「先启停、再应用 values」的顺序。
+    func applyValues(_ config: FeatureConfig)
 }
 
 extension Feature {
-    /// 默认实现：开关切换时启停
+    /// 统一的配置应用入口（模板方法）。
+    ///
+    /// 不把它做成协议需求：协议扩展没有 `super`，一旦某个 Feature
+    /// 覆盖了 `apply` 就再也调不回默认实现，「忘记启停」会变成静默 bug。
     func apply(_ config: FeatureConfig) {
         if config.isEnabled {
             start()
+            applyValues(config)
         } else {
             stop()
         }
     }
+
+    /// 默认空实现：只有开关的功能不用覆盖
+    func applyValues(_ config: FeatureConfig) {}
 }
 
 /// 设置项类型描述。

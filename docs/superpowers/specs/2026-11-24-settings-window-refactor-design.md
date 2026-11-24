@@ -88,17 +88,39 @@ protocol Feature: AnyObject {
     /// 设置项声明（用于界面数据绑定，不生成布局）
     var settings: [SettingItem] { get }
 
+    /// 从未配置过时的默认开关状态。
+    ///
+    /// **不是所有功能都默认开启**：`switcher`（⌘Tab 接管）和 `mouseFollow`
+    /// 在旧 `UserDefaults` 里默认关闭，硬编码 `true` 会改变既有行为。
+    var defaultEnabled: Bool { get }
+
     /// 启动：注册事件 tap、建立 AX 连接等
     func start()
     /// 停止：注销 tap、释放资源
     func stop()
-    /// 配置变更后热更新（不重启应用）
-    func apply(_ config: FeatureConfig)
+    /// 应用功能自己的配置值（映射表、每页项数等）。默认空实现。
+    func applyValues(_ config: FeatureConfig)
+}
+
+extension Feature {
+    /// 模板方法：先按开关启停，再应用具体配置。
+    ///
+    /// **不要做成协议需求**——协议扩展没有 `super`，一旦某个 Feature
+    /// 覆盖了 `apply` 就再也调不回默认实现，「忘记启停」会变成静默 bug。
+    /// 实现方只覆盖 `applyValues(_:)`。
+    func apply(_ config: FeatureConfig) {
+        if config.isEnabled {
+            start()
+            applyValues(config)
+        } else {
+            stop()
+        }
+    }
 }
 
 enum SettingItem {
     case toggle(key: String, title: String, defaultValue: Bool)
-    case hotkey(key: String, title: String, defaultValue: HotkeySpec)
+    case hotkey(key: String, title: String, defaultValue: HotkeyKeySpec)
     case number(key: String, title: String, defaultValue: Int, range: ClosedRange<Int>)
     case picker(key: String, title: String, options: [(value: String, label: String)], defaultValue: String)
     /// 映射表：界面用 MappingTableEditor 渲染
