@@ -5,7 +5,7 @@ import Foundation
 /// 所有功能配置收敛到这一个结构，序列化为 `~/.config/tony-toy/config.json`。
 /// 密码库（vault.jsonl）不在此列——它是独立的安全边界。
 struct TonyToyConfig: Codable, Equatable {
-    /// 配置格式版本，用于迁移。新增不兼容字段时 +1。
+    /// 配置格式版本。当前值的唯一来源是 `currentVersion`（见下）。
     var version: Int
 
     var general: GeneralConfig
@@ -13,13 +13,39 @@ struct TonyToyConfig: Codable, Equatable {
     /// key 是 Feature.id，例如 "capsLayer" / "gamepad"
     var features: [String: FeatureConfig]
 
+    /// 当前配置格式版本。新增不兼容字段时 +1。
+    static let currentVersion = 1
+
     static let `default` = TonyToyConfig(
-        version: 1,
+        version: currentVersion,
         general: GeneralConfig(),
         features: [:]
     )
 
-    /// 读取某功能的开关状态。未配置过的功能默认启用（保持升级前后行为一致）。
+    /// 成员初始化器。声明了 `init(from:)` 后编译器不再合成它，这里显式补回。
+    init(version: Int, general: GeneralConfig, features: [String: FeatureConfig]) {
+        self.version = version
+        self.general = general
+        self.features = features
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // 用 decodeIfPresent 而不是 decode：缺字段时用默认值，
+        // 否则手写 JSON 漏一个字段就会让整份配置被判损坏并静默重置。
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
+        general = try container.decodeIfPresent(GeneralConfig.self, forKey: .general)
+            ?? GeneralConfig()
+        features = try container.decodeIfPresent([String: FeatureConfig].self, forKey: .features)
+            ?? [:]
+    }
+
+    /// 读取某功能的开关状态。未配置过的功能默认启用。
+    ///
+    /// 注意：这不是所有功能的旧默认值——`switcher`（⌘Tab 接管）和
+    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭。默认值的最终归属
+    /// 应由各 Feature 自己声明（见 Task 5 的 `Feature` 协议），
+    /// 这里只是兜底。
     func isEnabled(_ featureID: String) -> Bool {
         features[featureID]?.isEnabled ?? true
     }
@@ -39,6 +65,17 @@ struct GeneralConfig: Codable, Equatable {
         self.theme = theme
         self.showMenuBarIcon = showMenuBarIcon
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = GeneralConfig()
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
+            ?? defaults.launchAtLogin
+        theme = try container.decodeIfPresent(ThemePreference.self, forKey: .theme)
+            ?? defaults.theme
+        showMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon)
+            ?? defaults.showMenuBarIcon
+    }
 }
 
 /// 单个功能的配置：开关 + 任意键值对。
@@ -52,6 +89,15 @@ struct FeatureConfig: Codable, Equatable {
     init(isEnabled: Bool = true, values: [String: JSONValue] = [:]) {
         self.isEnabled = isEnabled
         self.values = values
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = FeatureConfig()
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled)
+            ?? defaults.isEnabled
+        values = try container.decodeIfPresent([String: JSONValue].self, forKey: .values)
+            ?? defaults.values
     }
 }
 
@@ -68,4 +114,18 @@ enum ThemePreference: String, Codable, CaseIterable {
         case .dark: return "深色"
         }
     }
+}
+
+/// Feature 的唯一标识。集中定义，避免字符串字面量扩散到各处拼错。
+///
+/// 值与 `Feature.id` 必须一致。新增功能时同时在这里加一个常量。
+enum FeatureID {
+    static let capsLayer = "capsLayer"
+    static let hotkeyLayer = "hotkeyLayer"
+    static let mouseLayer = "mouseLayer"
+    static let launcher = "launcher"
+    static let switcher = "switcher"
+    static let passwordVault = "passwordVault"
+    static let gamepad = "gamepad"
+    static let inputAliases = "inputAliases"
 }

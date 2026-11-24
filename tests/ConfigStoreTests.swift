@@ -39,12 +39,44 @@ func testFeatureEnabledLookup() {
     print("testFeatureEnabledLookup passed")
 }
 
+func testConfigToleratesMissingFields() {
+    // 只写了 theme，其他字段全缺失
+    let json = #"{"general":{"theme":"dark"}}"#.data(using: .utf8)!
+    let config = try! JSONDecoder().decode(TonyToyConfig.self, from: json)
+
+    assertTrue(config.version == 1, "缺失 version 应用当前版本")
+    assertTrue(config.general.theme == .dark, "已写字段应保留")
+    assertTrue(config.general.launchAtLogin == false, "缺失 launchAtLogin 用默认值")
+    assertTrue(config.general.showMenuBarIcon == true, "缺失 showMenuBarIcon 用默认值")
+    assertTrue(config.features.isEmpty, "缺失 features 应为空")
+    print("testConfigToleratesMissingFields passed")
+}
+
+func testFeatureConfigToleratesMissingFields() {
+    let json = #"{"features":{"gamepad":{}}}"#.data(using: .utf8)!
+    let config = try! JSONDecoder().decode(TonyToyConfig.self, from: json)
+
+    assertTrue(config.features["gamepad"]?.isEnabled == true, "缺失 isEnabled 默认启用")
+    assertTrue(config.features["gamepad"]?.values.isEmpty == true, "缺失 values 应为空")
+    print("testFeatureConfigToleratesMissingFields passed")
+}
+
+func testConfigEmptyFeaturesByDefault() {
+    let config = TonyToyConfig.default
+    assertTrue(config.features.isEmpty, "默认配置的 features 应为空")
+    assertTrue(TonyToyConfig.currentVersion == 1, "当前版本号应为 1")
+    print("testConfigEmptyFeaturesByDefault passed")
+}
+
 @main
 struct ConfigStoreTests {
     static func main() {
         testConfigDefaults()
         testConfigRoundTrip()
         testFeatureEnabledLookup()
+        testConfigToleratesMissingFields()
+        testFeatureConfigToleratesMissingFields()
+        testConfigEmptyFeaturesByDefault()
         print("ConfigStoreTests all passed")
     }
 }
