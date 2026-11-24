@@ -231,9 +231,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// 5 个开关的构建逻辑完全一样，只有标题/id/action 不同——
     /// 抽出来避免每加一个功能就复制 3 行还容易写错 id。
+    /// 往菜单加一个功能总开关。
+    ///
+    /// **不用 `state` 显示勾号**，改用图标——菜单同时存在「勾选列」和
+    /// 「图标列」时，图标会被推到第二列，下半部分（启动器/密码管理器/
+    /// 重启/退出）的图标就和上面的勾号错开一格。
+    /// 全部走图标列后整列对齐，勾选状态用 ✓ / 空白表达。
     private func addToggle(to menu: NSMenu, title: String, featureID: String, action: Selector) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.state = isEnabled(featureID) ? .on : .off
+        let on = isEnabled(featureID)
+        if on {
+            item.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "已启用")
+        }
         menu.addItem(item)
     }
 
