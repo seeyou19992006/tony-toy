@@ -1133,8 +1133,117 @@ git commit -m "feat(core): 新增配置迁移，按文件格式分别导入旧�
 
 **Files:**
 - Create: `src/Core/Feature.swift`
+- Modify: `src/Core/TonyToyConfig.swift`（`isEnabled` 接受自定义默认值）
+- Modify: `tests/ConfigStoreTests.swift`（补默认值归属测试）
 
-- [ ] **Step 1: 实现协议**
+**设计决策：默认值必须由 Feature 声明（审查遗留项）**
+
+Task 2 审查发现一个语义错误：`isEnabled` 硬编码 `?? true`，注释还写「保持升级前后行为一致」。但 `MenuStateStore` 里 `isCmdTabEnabled` 和 `isMouseFollowEnabled` 的默认是 **`false`**——
+
+```swift
+// MenuStateStore.swift:15-16
+isCmdTabEnabled: false,
+isMouseFollowEnabled: false,
+```
+
+所以「全开」不是「一致」，而是**行为回归**：⌘Tab 接管会抢系统快捷键、鼠标跟随会改变窗口切换行为，用户会认为应用坏了。
+
+**修复**：`Feature` 协议加 `defaultEnabled` 属性，各 Feature 自己声明默认值；`TonyToyConfig.isEnabled` 接受默认值参数。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testFeatureDefaultEnabledDeclaredByFeature() {
+    // 未配置过的功能应使用 Feature 自己声明的默认值，
+    // 而不是硬编码 true——switcher 和 mouseFollow 的旧默认是 false。
+    let config = TonyToyConfig.default
+
+    assertTrue(
+        config.isEnabled("switcher", defaultEnabled: false) == false,
+        "⌘Tab 接管旧默认关闭，未配置时应为 false")
+    assertTrue(
+        config.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "Caps 层旧默认开启")
+
+    // 已配置过的功能，配置值优先
+    var configured = config
+    configured.features["switcher"] = FeatureConfig(isEnabled: true, values: [:])
+    assertTrue(
+        configured.isEnabled("switcher", defaultEnabled: false) == true,
+        "配置值应优先于默认值")
+    print("testFeatureDefaultEnabledDeclaredByFeature passed")
+}
+
+func testFeatureProtocolDefaults() {
+    // 一个最小的 Feature 实现，验证协议默认实现
+    final class StubFeature: Feature {
+        let id = "stub"
+        let title = "桩"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool { false }
+        private(set) var started = false
+        private(set) var stopped = false
+        func start() { started = true }
+        func stop() { stopped = true }
+    }
+
+    let feature = StubFeature()
+
+    // 默认 apply 实现：isEnabled 为 true 启动，false 停止
+    feature.apply(FeatureConfig(isEnabled: true))
+    assertTrue(feature.started, "isEnabled = true 应调用 start()")
+
+    feature.apply(FeatureConfig(isEnabled: false))
+    assertTrue(feature.stopped, "isEnabled = false 应调用 stop()")
+    print("testFeatureProtocolDefaults passed")
+}
+
+```
+
+在 `ConfigStoreTests.main()` 里追加两个调用。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/ConfigStore.swift src/Core/ConfigMigrator.swift src/DebugLog.swift tests/ConfigStoreTests.swift -o /tmp/config-tests 2>&1 | head -5`
+Expected: FAIL，报错 `cannot find type 'Feature' in scope` 和 `extra argument 'defaultEnabled' in call`
+
+- [ ] **Step 3: 修改 `TonyToyConfig.isEnabled`**
+
+把现有实现：
+
+```swift
+    /// 读取某功能的开关状态。未配置过的功能默认启用。
+    ///
+    /// 注意：这不是所有功能的旧默认值——`switcher`（⌘Tab 接管）和
+    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭。默认值的最终归属
+    /// 应由各 Feature 自己声明（见 Task 5 的 `Feature` 协议），
+    /// 这里只是兜底。
+    func isEnabled(_ featureID: String) -> Bool {
+        features[featureID]?.isEnabled ?? true
+    }
+```
+
+改成：
+
+```swift
+    /// 读取某功能的开关状态。
+    ///
+    /// - Parameter featureID: 功能的唯一标识
+    /// - Parameter defaultEnabled: 未配置过时使用的默认值。
+    ///   **必须由 Feature 自己声明**——不是所有功能都默认开启。
+    ///   旧 `UserDefaults` 里 `switcher`（⌘Tab 接管）和 `mouseFollow`
+    ///   的默认是 `false`，硬编码 `true` 会改变这些功能的既有行为。
+    func isEnabled(_ featureID: String, defaultEnabled: Bool = true) -> Bool {
+        features[featureID]?.isEnabled ?? defaultEnabled
+    }
+```
+
+> 保留默认参数 `true` 是为了向后兼容现有测试（`isEnabled("unknown") == true`）。新代码应该始终传 `defaultEnabled`。
+
+- [ ] **Step 4: 实现 Feature 协议**
 
 创建 `src/Core/Feature.swift`：
 
@@ -1143,10 +1252,12 @@ import Foundation
 
 /// 一个可配置的功能单元。
 ///
-/// 新增功能只需实现这个协议 + 在 FeatureRegistry 注册一行，
+/// 新增功能只需实现这个协议 + 在 `FeatureRegistry` 注册一行，
 /// 配置窗口自动获得侧边栏条目和设置项绑定。
+///
+/// 设计目标是「新增功能只改 2 处」：一个 Feature 文件 + 一行注册。
 protocol Feature: AnyObject {
-    /// 唯一标识，同时作为 config.json 里 features 的 key
+    /// 唯一标识，同时作为 `config.json` 里 `features` 的 key
     var id: String { get }
 
     /// 侧边栏显示名
@@ -1158,18 +1269,28 @@ protocol Feature: AnyObject {
     /// 设置项声明。界面据此渲染控件，不描述布局。
     var settings: [SettingItem] { get }
 
+    /// 从未配置过时的默认开关状态。
+    ///
+    /// **不是所有功能都默认开启**：`switcher`（⌘Tab 接管）和
+    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭，这里必须如实声明，
+    /// 否则升级会改变用户既有行为。
+    var defaultEnabled: Bool { get }
+
     /// 启动：注册事件 tap、建立 AX 连接等
     func start()
 
     /// 停止：注销 tap、释放资源
     func stop()
 
-    /// 配置变更后热更新。默认实现按 isEnabled 启停。
+    /// 配置变更后热更新。
+    ///
+    /// 默认实现只按 `isEnabled` 启停；需要更细配置（如映射表）的
+    /// Feature 应覆盖它，先调 `super` 语义再处理自己的 values。
     func apply(_ config: FeatureConfig)
 }
 
 extension Feature {
-    /// 默认实现：开关切换时启停，子类可覆盖以处理更细的配置
+    /// 默认实现：开关切换时启停
     func apply(_ config: FeatureConfig) {
         if config.isEnabled {
             start()
@@ -1179,43 +1300,56 @@ extension Feature {
     }
 }
 
-/// 设置项类型描述。只声明「有什么配置、什么类型、默认多少」，不管怎么摆。
+/// 设置项类型描述。
+///
+/// 只声明「有什么配置、什么类型、默认多少」，不管怎么摆——
+/// 布局由各分区视图手写，自动生成布局在本项目规模是负担。
 enum SettingItem {
     case toggle(key: String, title: String, defaultValue: Bool)
-    /// 组合键。复用 HotkeyMappingConfig.swift 里已有的 HotkeyKeySpec，
-    /// 不重复定义——现有类型就是 { key: String, modifiers: [String]? }。
+
+    /// 组合键。复用 `HotkeyMappingConfig.swift` 里已有的 `HotkeyKeySpec`，
+    /// 不重复定义——现有类型就是 `{ key: String, modifiers: [String]? }`。
     case hotkey(key: String, title: String, defaultValue: HotkeyKeySpec)
+
     case number(key: String, title: String, defaultValue: Int, range: ClosedRange<Int>)
+
     case picker(
-        key: String, title: String,
-        options: [(value: String, label: String)], defaultValue: String)
-    /// 映射表：界面用 MappingTableEditor 渲染（第三阶段实现）
+        key: String,
+        title: String,
+        options: [(value: String, label: String)],
+        defaultValue: String
+    )
+
+    /// 映射表：界面用 `MappingTableEditor` 渲染（第三阶段实现）
     case table(key: String, title: String)
 }
 ```
 
-- [ ] **Step 2: 编译验证**
+- [ ] **Step 5: 运行测试确认通过**
 
-Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/Feature.swift -o /tmp/feature-test 2>&1 | head -5`
-Expected: 无错误（`-o` 需要 main，用 `swiftc -parse` 代替）
-
-实际命令：
+Run:
 ```bash
-swiftc -parse src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/Feature.swift && echo "语法 OK"
+swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift \
+       src/Core/ConfigStore.swift src/Core/ConfigMigrator.swift \
+       src/Core/Feature.swift src/DebugLog.swift \
+       tests/ConfigStoreTests.swift -o /tmp/config-tests && /tmp/config-tests
 ```
-Expected: 输出 `语法 OK`
+Expected: 输出 `ConfigStoreTests all passed`（17 个测试全过）
 
-- [ ] **Step 3: 确认没有重复定义**
+- [ ] **Step 6: 更新 run_all.sh**
 
-Run: `grep -rn "struct HotkeySpec\|struct HotkeyKeySpec" src/`
-Expected: 只有 `src/LauncherSettings.swift`（HotkeySpec）和 `src/HotkeyMappingConfig.swift`（HotkeyKeySpec）两处。
-本任务**不新增**任何按键类型定义——直接复用 `HotkeyKeySpec`。
+在 ConfigStore 编译块里加上 `"$REPO_ROOT/src/Core/Feature.swift" \`。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 7: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add src/Core/Feature.swift
-git commit -m "feat(core): 新增 Feature 协议与设置项描述"
+git add src/Core/Feature.swift src/Core/TonyToyConfig.swift tests/ConfigStoreTests.swift tests/run_all.sh
+git commit -m "feat(core): 新增 Feature 协议，默认值由功能自己声明"
 ```
 
 ---
