@@ -261,7 +261,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // MARK: 设置入口
 
         let settingsItem = NSMenuItem(
-            title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+            title: "设置", action: #selector(showSettings), keyEquivalent: ",")
         // 透明占位图：这一项不放图标，但菜单已有图标列，
         // 不给 image 的话标题会贴到最左边，与下面各项的标题错开一格。
         settingsItem.image = NSImage(size: NSSize(width: 16, height: 16))
