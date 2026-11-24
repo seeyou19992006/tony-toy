@@ -55,6 +55,8 @@ write_info_plist() {
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
+    <key>CFBundleVersion</key>
+    <string>$APP_BUILD</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>

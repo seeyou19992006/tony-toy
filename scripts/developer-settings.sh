@@ -7,7 +7,10 @@ APP_NAME="${APP_NAME:-TonyToy.app}"
 BINARY_NAME="${BINARY_NAME:-TonyToy}"
 CF_BUNDLE_NAME="${CF_BUNDLE_NAME:-TonyToy}"
 BUNDLE_ID="${BUNDLE_ID:-com.sxl.tonytoy}"
-APP_VERSION="${APP_VERSION:-1.0.2}"
+APP_VERSION="${APP_VERSION:-1.3.1}"
+# 构建号：用 git 提交数，每次提交自动递增，无需手工维护。
+# 不在 git 仓库里（如从 tarball 构建）时退回 0。
+APP_BUILD="${APP_BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 0)}"
 MIN_OS_VERSION="${MIN_OS_VERSION:-11.0}"
 IS_AGENT_APP="${IS_AGENT_APP:-true}" # Set to true for menu-bar/background apps (LSUIElement)
 BUILD_DIR="${BUILD_DIR:-dist/build}"
