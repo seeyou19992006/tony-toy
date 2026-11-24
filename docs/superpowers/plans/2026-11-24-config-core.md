@@ -654,27 +654,37 @@ git commit -m "feat(core): 新增 ConfigStore 读写与损坏备份"
 - Create: `src/Core/ConfigMigrator.swift`
 - Modify: `tests/ConfigStoreTests.swift`
 
+**关键前提：4 个旧文件的格式各不相同（已实测确认）**
+
+| 文件 | 顶层键 | 迁移到 |
+|---|---|---|
+| `hotkeys.json` | `version` + `mappings` | `features.hotkeyLayer.values.mappings` |
+| `caps-mappings.json` | `version` + `mappings` | `features.capsLayer.values.mappings` |
+| `mouse-layer.json` | `version` + `activation_button` + `mappings` | `features.mouseLayer.values`（`mappings` + `activationButton`） |
+| `input-aliases.json` | `version` + `keyboard_keys` + `modifiers` + `mouse_inputs` + `actions` | `features.inputAliases.values`（**4 个独立字典，没有 mappings**） |
+
+**不能统一按 `mappings` 处理**——`input-aliases.json` 没有这个键，按统一逻辑会迁移失败并静默丢失 60+ 个键位别名。这是本任务最容易踩的坑。
+
 - [ ] **Step 1: 写失败的测试**
 
-在 `tests/ConfigStoreTests.swift` 的 `assertTrue` 之前插入：
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入这 4 个测试函数：
 
 ```swift
-func testMigratorImportsLegacyFiles() {
+func testMigratorImportsMappingFiles() {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
     try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
-    // 造三个旧格式文件
-    let capsJSON = """
-    {"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}
-    """
+    // Caps 层：from 是单个字符
+    let capsJSON = #"{"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}"#
     try! capsJSON.write(
         to: tempDir.appendingPathComponent("caps-mappings.json"),
         atomically: true, encoding: .utf8)
 
+    // 全局快捷键：from 是组合键
     let hotkeysJSON = """
-    {"version":1,"mappings":[{"from":{"key":"escape","modifiers":["command"]},
+    {"version":1,"mappings":[{"from":{"key":"escape","modifiers":["command"]}, \
     "to":{"key":"grave_accent_and_tilde","modifiers":["command"]}}]}
     """
     try! hotkeysJSON.write(
@@ -683,56 +693,120 @@ func testMigratorImportsLegacyFiles() {
 
     let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
     let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
 
-    let migrated = try! migrator.migrateIfNeeded()
+    assertTrue(result.didMigrate, "首次迁移应返回 didMigrate = true")
+    assertTrue(result.migratedFeatureCount == 2, "应迁移 2 个功能节点")
 
-    assertTrue(migrated.capitalLayerMappingCount == 1, "Caps 层应迁入 1 条")
-    assertTrue(migrated.config.features["capsLayer"] != nil, "应生成 capsLayer 节点")
-    assertTrue(migrated.config.features["hotkeyLayer"] != nil, "应生成 hotkeyLayer 节点")
+    let capsMappings = result.config.features["capsLayer"]?.values["mappings"]
+    guard case .array(let capsList)? = capsMappings else {
+        assertTrue(false, "capsLayer.values.mappings 应为数组")
+        return
+    }
+    assertTrue(capsList.count == 1, "Caps 层应迁入 1 条")
 
-    // 旧文件应重命名，不再存在原路径
-    assertTrue(
-        !FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("caps-mappings.json").path),
-        "旧文件应被重命名")
-    assertTrue(
-        FileManager.default.fileExists(
-            atPath: tempDir.appendingPathComponent("caps-mappings.json.migrated").path),
-        "旧文件应保留为 .migrated")
-    print("testMigratorImportsLegacyFiles passed")
+    let hotkeyMappings = result.config.features["hotkeyLayer"]?.values["mappings"]
+    guard case .array(let hotkeyList)? = hotkeyMappings else {
+        assertTrue(false, "hotkeyLayer.values.mappings 应为数组")
+        return
+    }
+    assertTrue(hotkeyList.count == 1, "全局快捷键应迁入 1 条")
+
+    print("testMigratorImportsMappingFiles passed")
 }
 
-func testMigratorIsIdempotent() {
+func testMigratorImportsInputAliases() {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
     try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
+    // 真实结构：没有 mappings，是 4 个独立字典
+    let aliasesJSON = """
+    {"version":1,"keyboard_keys":{"a":{"key_code":0}},"modifiers":{"command":{"flag":"command"}},
+    "mouse_inputs":{"left_click":{"kind":"button","button_number":0}},
+    "actions":{"volume_scroll":{"kind":"volume_scroll"}}}
+    """
+    try! aliasesJSON.write(
+        to: tempDir.appendingPathComponent("input-aliases.json"),
+        atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
+
+    let values = result.config.features["inputAliases"]?.values
+    assertTrue(values != nil, "应生成 inputAliases 节点")
+    assertTrue(values?["keyboardKeys"] != nil, "应迁入 keyboardKeys")
+    assertTrue(values?["modifiers"] != nil, "应迁入 modifiers")
+    assertTrue(values?["mouseInputs"] != nil, "应迁入 mouseInputs")
+    assertTrue(values?["actions"] != nil, "应迁入 actions")
+    print("testMigratorImportsInputAliases passed")
+}
+
+func testMigratorPreservesActivationButton() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mouseJSON = """
+    {"version":1,"activation_button":"button5",
+    "mappings":[{"from":{"input":"scroll_wheel"},"to":{"action":"volume_scroll"}}]}
+    """
+    try! mouseJSON.write(
+        to: tempDir.appendingPathComponent("mouse-layer.json"),
+        atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
+
+    let values = result.config.features["mouseLayer"]?.values
+    assertTrue(
+        values?["activationButton"] == .string("button5"),
+        "应保留 activation_button，否则鼠标侧键层功能失效")
+    print("testMigratorPreservesActivationButton passed")
+}
+
+func testMigratorRenamesLegacyFilesAndIsIdempotent() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let capsURL = tempDir.appendingPathComponent("caps-mappings.json")
+    try! #"{"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}"#.write(
+        to: capsURL, atomically: true, encoding: .utf8)
+
     let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
     let migrator = ConfigMigrator(directory: tempDir, store: store)
 
-    _ = try! migrator.migrateIfNeeded()
-    let configAfterFirst = try! store.load()
+    let first = try! migrator.migrateIfNeeded()
+    assertTrue(first.didMigrate, "首次应执行迁移")
+
+    // 旧文件应重命名为 .migrated
+    assertTrue(
+        !FileManager.default.fileExists(atPath: capsURL.path),
+        "旧文件应被移走")
+    assertTrue(
+        FileManager.default.fileExists(
+            atPath: tempDir.appendingPathComponent("caps-mappings.json.migrated").path),
+        "旧文件应保留为 .migrated")
 
     // 第二次调用不应改变任何东西
-    _ = try! migrator.migrateIfNeeded()
+    let configAfterFirst = try! store.load()
+    let second = try! migrator.migrateIfNeeded()
     let configAfterSecond = try! store.load()
 
+    assertTrue(second.didMigrate == false, "重复迁移应返回 didMigrate = false")
     assertTrue(configAfterFirst == configAfterSecond, "重复迁移应幂等")
-    print("testMigratorIsIdempotent passed")
+    print("testMigratorRenamesLegacyFilesAndIsIdempotent passed")
 }
-
-```
-
-在 `ConfigStoreTests.main()` 里追加调用：
-
-```swift
-        testMigratorImportsLegacyFiles()
-        testMigratorIsIdempotent()
-```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swiftc ... 2>&1 | head -5`（用 Step 5 的完整命令）
+Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/ConfigStore.swift src/DebugLog.swift tests/ConfigStoreTests.swift -o /tmp/config-tests 2>&1 | head -5`
 Expected: FAIL，报错 `cannot find type 'ConfigMigrator' in scope`
 
 - [ ] **Step 3: 实现 ConfigMigrator**
@@ -742,29 +816,40 @@ Expected: FAIL，报错 `cannot find type 'ConfigMigrator' in scope`
 ```swift
 import Foundation
 
-/// 把 5 个旧配置文件迁移到统一的 config.json。
+/// 把旧配置文件迁移到统一的 config.json。
 ///
 /// 策略：
-/// - config.json 已存在 → 不动，直接返回。
-/// - 旧文件保留（重命名为 .migrated），迁移出错时用户能恢复。
+/// - `config.json` 已存在 → 不动，直接返回。
+/// - 旧文件保留（重命名为 `.migrated`），迁移出错时用户能恢复。
 /// - 迁移幂等：第二次调用时旧文件已不存在，直接返回。
+///
+/// **注意 4 个旧文件格式不同**：`hotkeys` / `caps-mappings` / `mouse-layer`
+/// 都有 `mappings` 数组，但 `input-aliases` 是 4 个独立字典。
+/// 统一按 `mappings` 处理会让别名静默丢失。
 final class ConfigMigrator {
     struct Result {
         let config: TonyToyConfig
         let didMigrate: Bool
-        /// 迁移成功的 Caps 映射条数（供测试断言）
-        let capitalLayerMappingCount: Int
+        /// 迁移成功的功能节点数（供测试断言）
+        let migratedFeatureCount: Int
     }
 
     private let directory: URL
     private let store: ConfigStore
 
-    /// 旧文件名 → 在新配置里的 feature id
-    private static let legacyFiles: [(fileName: String, featureID: String)] = [
-        ("caps-mappings.json", "capsLayer"),
-        ("hotkeys.json", "hotkeyLayer"),
-        ("mouse-layer.json", "mouseLayer"),
-        ("input-aliases.json", "inputAliases"),
+    /// 有 `mappings` 数组的文件 → 对应的 feature id
+    private static let mappingFiles: [(fileName: String, featureID: String)] = [
+        ("caps-mappings.json", FeatureID.capsLayer),
+        ("hotkeys.json", FeatureID.hotkeyLayer),
+        ("mouse-layer.json", FeatureID.mouseLayer),
+    ]
+
+    /// `input-aliases.json` 的 4 个字典：JSON 键名 → 配置键名
+    private static let aliasSections: [(jsonKey: String, configKey: String)] = [
+        ("keyboard_keys", "keyboardKeys"),
+        ("modifiers", "modifiers"),
+        ("mouse_inputs", "mouseInputs"),
+        ("actions", "actions"),
     ]
 
     init(directory: URL, store: ConfigStore) {
@@ -780,13 +865,14 @@ final class ConfigMigrator {
             let config = try store.load()
             return Result(
                 config: config, didMigrate: false,
-                capitalLayerMappingCount: Self.mappingCount(in: config, featureID: "capsLayer"))
+                migratedFeatureCount: config.features.count)
         }
 
         var config = TonyToyConfig.default
-        var capsMappingCount = 0
+        var migratedCount = 0
 
-        for (fileName, featureID) in Self.legacyFiles {
+        // 1. 有 mappings 数组的三个文件
+        for (fileName, featureID) in Self.mappingFiles {
             let fileURL = directory.appendingPathComponent(fileName)
             guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
@@ -798,74 +884,98 @@ final class ConfigMigrator {
                 continue
             }
 
-            config.features[featureID] = FeatureConfig(
-                isEnabled: true,
-                values: ["mappings": .array(mappings)]
-            )
+            var values: [String: JSONValue] = ["mappings": .array(mappings)]
 
-            if featureID == "capsLayer" {
-                capsMappingCount = mappings.count
+            // mouse-layer 的激活键：不迁过去侧键层功能就失效了
+            if let activationButton = root.string("activation_button") {
+                values["activationButton"] = .string(activationButton)
             }
 
-            // 保留旧文件为 .migrated，不删除
-            let migratedURL = fileURL.appendingPathExtension("migrated")
-            try? FileManager.default.removeItem(at: migratedURL)
-            try? FileManager.default.moveItem(at: fileURL, to: migratedURL)
-
+            config.features[featureID] = FeatureConfig(isEnabled: true, values: values)
+            migratedCount += 1
+            moveToMigrated(fileURL)
             dbg("已迁移 \(fileName) → features.\(featureID)（\(mappings.count) 条）")
         }
 
-        // 迁移 UserDefaults 里的 8 个布尔开关
+        // 2. input-aliases.json：4 个独立字典，不是 mappings
+        let aliasesURL = directory.appendingPathComponent("input-aliases.json")
+        if FileManager.default.fileExists(atPath: aliasesURL.path),
+            let data = try? Data(contentsOf: aliasesURL),
+            let root = try? JSONDecoder().decode(JSONValue.self, from: data)
+        {
+            var values: [String: JSONValue] = [:]
+            for (jsonKey, configKey) in Self.aliasSections {
+                if let section = root.object(jsonKey) {
+                    values[configKey] = .object(section)
+                }
+            }
+
+            if !values.isEmpty {
+                config.features[FeatureID.inputAliases] = FeatureConfig(
+                    isEnabled: true, values: values)
+                migratedCount += 1
+                moveToMigrated(aliasesURL)
+                dbg("已迁移 input-aliases.json（\(values.count) 个分组）")
+            }
+        }
+
+        // 3. UserDefaults 里的旧布尔开关
         config = Self.migrateUserDefaults(into: config)
 
         try store.save(config)
 
         return Result(
-            config: config, didMigrate: true,
-            capitalLayerMappingCount: capsMappingCount)
+            config: config, didMigrate: true, migratedFeatureCount: migratedCount)
     }
 
     // MARK: - 私有
 
+    /// 保留旧文件为 `.migrated`，不删除——迁移出错时用户能恢复
+    private func moveToMigrated(_ fileURL: URL) {
+        let migratedURL = fileURL.appendingPathExtension("migrated")
+        try? FileManager.default.removeItem(at: migratedURL)
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: migratedURL)
+        } catch {
+            dbg("重命名 \(fileURL.lastPathComponent) 失败: \(error)")
+        }
+    }
+
     /// 把 MenuStateStore 的旧 UserDefaults key 迁到 features[*].isEnabled。
-    /// 保留读取作为兜底，避免升级后开关状态丢失。
+    ///
+    /// 注意 `switcher` 和 `mouseFollow` 的旧默认是 **false**（不是 true），
+    /// 这里只迁移「用户显式设置过」的值，未设置的交给 Feature 自己声明默认值。
     private static func migrateUserDefaults(into config: TonyToyConfig) -> TonyToyConfig {
         var config = config
         let defaults = UserDefaults.standard
 
         let mapping: [(legacyKey: String, featureID: String)] = [
-            ("menu.isVolumeEnabled", "mouseLayer"),
-            ("menu.isCapsEnabled", "capsLayer"),
-            ("menu.isHotkeyEnabled", "hotkeyLayer"),
-            ("menu.isCmdTabEnabled", "switcher"),
-            ("menu.isGamepadHomeEnabled", "gamepad"),
+            ("menu.isVolumeEnabled", FeatureID.mouseLayer),
+            ("menu.isCapsEnabled", FeatureID.capsLayer),
+            ("menu.isHotkeyEnabled", FeatureID.hotkeyLayer),
+            ("menu.isCmdTabEnabled", FeatureID.switcher),
+            ("menu.isGamepadHomeEnabled", FeatureID.gamepad),
         ]
 
         for (legacyKey, featureID) in mapping {
             guard defaults.object(forKey: legacyKey) != nil else { continue }
-            let enabled = defaults.bool(forKey: legacyKey)
             var feature = config.features[featureID] ?? FeatureConfig()
-            feature.isEnabled = enabled
+            feature.isEnabled = defaults.bool(forKey: legacyKey)
             config.features[featureID] = feature
         }
 
         // 鼠标跟随是「窗口」分区的设置项，不是独立功能
         if defaults.object(forKey: "menu.isMouseFollowEnabled") != nil {
-            var feature = config.features["switcher"] ?? FeatureConfig()
-            feature.values["mouseFollow"] = .bool(defaults.bool(forKey: "menu.isMouseFollowEnabled"))
-            config.features["switcher"] = feature
+            var feature = config.features[FeatureID.switcher] ?? FeatureConfig()
+            feature.values["mouseFollow"] = .bool(
+                defaults.bool(forKey: "menu.isMouseFollowEnabled"))
+            config.features[FeatureID.switcher] = feature
         }
 
         return config
     }
-
-    private static func mappingCount(in config: TonyToyConfig, featureID: String) -> Int {
-        guard let value = config.features[featureID]?.values["mappings"],
-            case .array(let mappings) = value
-        else { return 0 }
-        return mappings.count
-    }
 }
+```
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -876,17 +986,64 @@ swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift \
        src/DebugLog.swift tests/ConfigStoreTests.swift \
        -o /tmp/config-tests && /tmp/config-tests
 ```
-Expected: 输出 `ConfigStoreTests all passed`
+Expected: 输出 `ConfigStoreTests all passed`（13 个测试全过）
 
 - [ ] **Step 5: 更新 run_all.sh**
 
-在 Task 3 的 swiftc 调用里加上 `"$REPO_ROOT/src/Core/ConfigMigrator.swift" \`。
+在 Step 3 的编译块里加上 `"$REPO_ROOT/src/Core/ConfigMigrator.swift" \`。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 补 updateFeature + onChange 测试（审查遗留项）**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testUpdateFeatureNotifiesAndPersists() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 先放一个无关字段，验证 updateFeature 不会整份覆盖
+    var initial = TonyToyConfig.default
+    initial.general.showMenuBarIcon = false
+    try! store.save(initial)
+
+    var received: TonyToyConfig?
+    store.onChange = { received = $0 }
+
+    try! store.updateFeature(FeatureID.gamepad) { feature in
+        feature.isEnabled = false
+    }
+
+    assertTrue(received != nil, "onChange 应被触发")
+    assertTrue(received?.isEnabled(FeatureID.gamepad) == false, "回调应带新值")
+    assertTrue(
+        received?.general.showMenuBarIcon == false,
+        "未触碰的字段应保留，不能被整份覆盖")
+
+    // 回调触发时磁盘应该已经是新值
+    let onDisk = try! store.load()
+    assertTrue(onDisk.isEnabled(FeatureID.gamepad) == false, "回调前应已落盘")
+    print("testUpdateFeatureNotifiesAndPersists passed")
+}
+
+```
+
+并在 `ConfigStoreTests.main()` 里追加 `testUpdateFeatureNotifiesAndPersists()`。
+
+- [ ] **Step 7: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 8: 提交**
 
 ```bash
 git add src/Core/ConfigMigrator.swift tests/ConfigStoreTests.swift tests/run_all.sh
-git commit -m "feat(core): 新增配置迁移，自动导入 5 个旧文件"
+git commit -m "feat(core): 新增配置迁移，按文件格式分别导入旧配置"
 ```
 
 ---
