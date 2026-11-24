@@ -35,6 +35,19 @@
 
 ---
 
+## 审查遗留项（各任务的验收附加条件）
+
+代码质量审查在各阶段提出的跟进项，必须在该任务完成时兑现，否则会成为永久技术债。
+
+| 来源 | 事项 | 兑现位置 |
+|---|---|---|
+| Task 3 审查 | 补 `updateFeature` + `onChange` 测试：回调触发时磁盘已是新值、未触碰字段被保留 | Task 4 测试步骤 |
+| Task 3 审查 | 兑现 `load() throws` 决策：引入真实抛错场景（版本不兼容/迁移失败），或降级为不抛 | Task 6 验收 |
+| Task 3 审查 | **语义一致性**：设计文档写「`save()` → 落盘 → 通知 Feature」，但实现只有 `updateFeature` 触发 `onChange`。配置窗口保存必须走 `updateFeature`，或在 save 后显式广播，否则热更新静默失效 | Task 7-8 前拍板 |
+| Task 2 审查 | 默认值归属：`isEnabled` 的 `?? true` 对 `switcher`/`mouseFollow` 与旧默认相反（旧为 `false`）。应由 Feature 自己声明默认值 | Task 5 设计协议时裁决 |
+
+---
+
 ### Task 1: JSONValue 类型
 
 **Files:**
