@@ -11,6 +11,7 @@
 **关键前提（已确认）：**
 - `scripts/build.sh` 用 `find src -type f -name '*.swift'` 收集源文件，**新建子目录无需改构建脚本**。
 - 测试用 `swiftc` 手动列文件编译后直接运行，新测试文件**必须**加到 `tests/run_all.sh`。
+- **测试文件不能用顶层语句**：`swiftc` 多文件编译只允许 `main.swift` 有顶层代码。所有测试入口必须写成 `@main struct XXXTests { static func main() { ... } }`，与 `tests/MenuStateStoreTests.swift` 一致。
 - 项目没有第三方依赖，不要引入 SPM。
 
 ---
@@ -302,10 +303,15 @@ func assertTrue(_ condition: Bool, _ message: String) {
     }
 }
 
-testConfigDefaults()
-testConfigRoundTrip()
-testFeatureEnabledLookup()
-print("ConfigStoreTests all passed")
+@main
+struct ConfigStoreTests {
+    static func main() {
+        testConfigDefaults()
+        testConfigRoundTrip()
+        testFeatureEnabledLookup()
+        print("ConfigStoreTests all passed")
+    }
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -490,12 +496,12 @@ func testConfigStoreCorruptedFile() {
 
 ```
 
-在文件末尾的调用列表里追加：
+在 `ConfigStoreTests.main()` 里追加调用：
 
 ```swift
-testConfigStoreSaveAndLoad()
-testConfigStoreCreatesDirectory()
-testConfigStoreCorruptedFile()
+        testConfigStoreSaveAndLoad()
+        testConfigStoreCreatesDirectory()
+        testConfigStoreCorruptedFile()
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -698,11 +704,11 @@ func testMigratorIsIdempotent() {
 
 ```
 
-末尾追加调用：
+在 `ConfigStoreTests.main()` 里追加调用：
 
 ```swift
-testMigratorImportsLegacyFiles()
-testMigratorIsIdempotent()
+        testMigratorImportsLegacyFiles()
+        testMigratorIsIdempotent()
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
