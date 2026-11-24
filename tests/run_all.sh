@@ -22,6 +22,12 @@ swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
        -o /tmp/jsonvalue-tests
 /tmp/jsonvalue-tests
 
+swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
+       "$REPO_ROOT/src/Core/TonyToyConfig.swift" \
+       "$REPO_ROOT/tests/ConfigStoreTests.swift" \
+       -o /tmp/config-tests
+/tmp/config-tests
+
 swiftc "$REPO_ROOT/src/PasswordEntry.swift" \
        "$REPO_ROOT/src/VaultCryptoService.swift" \
        "$REPO_ROOT/src/VaultService.swift" \
