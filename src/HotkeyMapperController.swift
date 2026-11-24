@@ -28,7 +28,7 @@ final class HotkeyMapperController {
         stop()
         do {
             mappings = try configStore.loadMappings()
-            fputs("Loaded \(mappings.count) hotkey mappings from \(configStore.configURL.path).\n", stderr)
+            fputs("Loaded \(mappings.count) hotkey mappings.\n", stderr)
         } catch {
             fputs("Failed to load hotkey mappings from \(configStore.configURL.path): \(error)\n", stderr)
             mappings = []

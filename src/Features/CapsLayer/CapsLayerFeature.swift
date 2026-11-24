@@ -32,5 +32,9 @@ final class CapsLayerFeature: Feature {
     /// 且 `start()` 会先 `stop()` 拆掉 tap 再重建、重复调用 `hidutil` 重映射——
     /// 直接复用 `setEnabled(true)` 来做重载会带来不必要的 tap 抖动，
     /// 所以这里先留空，等控制器暴露轻量重载入口后再接。
-    func applyValues(_ config: FeatureConfig) {}
+    func applyValues(_ config: FeatureConfig) {
+        // 映射表改了要重新加载——配置窗口保存后立即生效，不用重启。
+        // `reload()` 是轻量重载（只重读映射），不会拆掉 event tap。
+        controller.reload()
+    }
 }

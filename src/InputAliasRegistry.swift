@@ -287,10 +287,47 @@ final class InputAliasRegistryStore {
     }
 
     func loadRegistry() throws -> InputAliasRegistry {
+        // 优先从统一配置读，理由同 `HotkeyMappingConfigStore`
+        if let unified = unifiedConfig() {
+            return try resolve(unified)
+        }
+
+        // 兼容：还没迁移的老配置
         try ensureConfigExists()
         let data = try Data(contentsOf: configURL)
         let config = try JSONDecoder().decode(InputAliasRegistryConfig.self, from: data)
         return try resolve(config)
+    }
+
+    /// 从 `config.json` 的 `features.inputAliases.values` 还原配置。
+    ///
+    /// 别名表是 4 个独立字典（没有 `mappings`），迁移时逐项存在 `values` 里。
+    private func unifiedConfig() -> InputAliasRegistryConfig? {
+        guard let config = try? ConfigStore.shared.load(),
+            let feature = config.features[FeatureID.inputAliases]
+        else { return nil }
+
+        // 借道 JSON 编解码把 4 个字典各自还原成强类型
+        func decode<T: Decodable>(_ key: String, as type: T.Type) -> T? {
+            guard case .object(let dict)? = feature.values[key],
+                let data = try? JSONEncoder().encode(JSONValue.object(dict))
+            else { return nil }
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+
+        guard let keyboardKeys = decode("keyboardKeys", as: [String: KeyboardKeyAliasSpec].self),
+            let modifiers = decode("modifiers", as: [String: ModifierAliasSpec].self),
+            let mouseInputs = decode("mouseInputs", as: [String: MouseInputAliasSpec].self)
+        else { return nil }
+
+        return InputAliasRegistryConfig(
+            version: 1,
+            keyboardKeys: keyboardKeys,
+            modifiers: modifiers,
+            mouseInputs: mouseInputs,
+            actions: decode("actions", as: [String: MouseActionAliasSpec].self),
+            legacyMouseActions: nil
+        )
     }
 
     func ensureConfigExists() throws {
@@ -383,8 +420,14 @@ final class InputAliasRegistryStore {
 
     private func resolveAction(name: String, spec: MouseActionAliasSpec) throws -> String {
         let kind = spec.kind.lowercased()
+        // 白名单必须与 `AppAction` 的 `actionKind` 解析保持一致
+        // （`src/AppAction.swift` 的 `case "launch_application", "toggle_application":`）。
+        // 漏一个就会让整个 registry 初始化失败，进而让所有热键静默失效——
+        // 之前 `launch_application` 就是这么漏的。
         switch kind {
-        case "volume_scroll", "mission_control", "send_hotkey", "activate_application", "move_window_to_adjacent_display", "maximize_window":
+        case "volume_scroll", "mission_control", "send_hotkey", "activate_application",
+            "move_window_to_adjacent_display", "maximize_window",
+            "launch_application", "toggle_application":
             return kind
         default:
             throw InputAliasRegistryError.invalidAction(name)

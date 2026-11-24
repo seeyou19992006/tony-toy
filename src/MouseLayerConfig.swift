@@ -142,10 +142,45 @@ final class MouseLayerConfigStore {
     }
 
     func loadConfig() throws -> MouseLayerResolvedConfig {
+        // 优先从统一配置读，理由同 `HotkeyMappingConfigStore`
+        if let unified = unifiedConfig() {
+            return try resolve(unified)
+        }
+
+        // 兼容：还没迁移的老配置
         try ensureConfigExists()
         let data = try Data(contentsOf: configURL)
         let config = try JSONDecoder().decode(MouseLayerConfig.self, from: data)
         return try resolve(config)
+    }
+
+    /// 从 `config.json` 的 `features.mouseLayer.values` 还原配置。
+    ///
+    /// 侧键层比另两个映射表多一个 `activationButton`（激活键），
+    /// 做迁移时单独存在 `values` 里。
+    private func unifiedConfig() -> MouseLayerConfig? {
+        guard let config = try? ConfigStore.shared.load(),
+            let feature = config.features[FeatureID.mouseLayer],
+            case .array(let list)? = feature.values["mappings"]
+        else { return nil }
+
+        guard let data = try? JSONEncoder().encode(JSONValue.array(list)),
+            let mappings = try? JSONDecoder().decode([MouseLayerMappingEntry].self, from: data)
+        else { return nil }
+
+        // 激活键缺失时用默认值（与 resources/mouse-layer.default.json 一致）
+        let activationButton: String
+        if case .string(let value)? = feature.values["activationButton"] {
+            activationButton = value
+        } else {
+            activationButton = "button5"
+        }
+
+        return MouseLayerConfig(
+            version: 1,
+            activationButton: activationButton,
+            mappings: mappings
+        )
     }
 
     func ensureConfigExists() throws {

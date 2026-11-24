@@ -55,5 +55,9 @@ final class MouseLayerFeature: Feature {
     /// 只能整条重启 tap，且重载来源是独立的 `mouse-layer.json`，
     /// 不读 `FeatureConfig.values`。所以这里先留空，等控制器暴露
     /// `func applyConfig(_ config: MouseLayerResolvedConfig)`（或 `reload()`）后再接。
-    func applyValues(_ config: FeatureConfig) {}
+    func applyValues(_ config: FeatureConfig) {
+        // 映射表改了要重新加载——配置窗口保存后立即生效，不用重启。
+        // `reload()` 是轻量重载（只重读映射），不会拆掉 event tap。
+        controller.reload()
+    }
 }
