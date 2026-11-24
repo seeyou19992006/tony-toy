@@ -124,6 +124,13 @@ func testConfigStoreCorruptedFile() {
     let backups = try! FileManager.default.contentsOfDirectory(atPath: tempDir.path)
         .filter { $0.contains("corrupted") }
     assertTrue(!backups.isEmpty, "损坏文件应备份为 .corrupted")
+
+    // 必须是「移走」而不是「复制」：复制的话原文件还在，
+    // 下次启动会再解析失败一次，备份文件越积越多。
+    assertTrue(
+        !FileManager.default.fileExists(atPath: fileURL.path),
+        "损坏的原文件应已被移走，不能留在原地")
+
     print("testConfigStoreCorruptedFile passed")
 }
 
