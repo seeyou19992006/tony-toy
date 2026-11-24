@@ -62,10 +62,27 @@ final class CapsMappingConfigStore {
     }
 
     func loadMappings() throws -> [Int64: CapsResolvedMapping] {
+        // 优先从统一配置读，理由同 `HotkeyMappingConfigStore`
+        if let entries = unifiedMappings() {
+            return try resolveMappings(entries)
+        }
+
+        // 兼容：还没迁移的老配置
         try ensureConfigExists()
         let data = try Data(contentsOf: configURL)
         let config = try JSONDecoder().decode(CapsMappingConfig.self, from: data)
         return try resolveMappings(config.mappings)
+    }
+
+    /// 从 `config.json` 的 `features.capsLayer.values.mappings` 读出映射
+    private func unifiedMappings() -> [CapsMappingEntry]? {
+        guard let config = try? ConfigStore.shared.load(),
+            let value = config.features[FeatureID.capsLayer]?.values["mappings"],
+            case .array(let list) = value
+        else { return nil }
+
+        guard let data = try? JSONEncoder().encode(JSONValue.array(list)) else { return nil }
+        return try? JSONDecoder().decode([CapsMappingEntry].self, from: data)
     }
 
     func ensureConfigExists() throws {

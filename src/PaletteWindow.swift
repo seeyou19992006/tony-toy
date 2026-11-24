@@ -11,7 +11,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let scrollView = NSScrollView()
     private let background = NSVisualEffectView()
     private let container = NSView()
-    private let tintView = NSView()
+    private let tintView = AppearanceAwareTintView()
 
     private var results: [AppEntry] = []
     private let pageSize = 8
@@ -43,8 +43,11 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        hidesOnDeactivate = false
-        appearance = NSAppearance(named: .darkAqua)
+        // 失焦即隐藏（Spotlight / Alfred 的行为）。这样不存在
+        // 「面板可见但收不到按键」的状态，也就不需要全局 tap 兜底。
+        hidesOnDeactivate = true
+        // 不要硬编码 appearance——那会覆盖 `NSApp.appearance`，
+        // 让设置里的「主题」对启动器/切换器失效。留空即继承应用外观。
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         delegate = self
 
@@ -73,7 +76,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
         // 深色着色层：压暗毛玻璃，保证深色主题下的对比度
         tintView.wantsLayer = true
-        tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.86).cgColor
+        // 颜色由 `AppearanceAwareTintView.updateLayer` 按当前外观算，
+        // 不在这里写死——写死的话切主题只有框架变、遮罩还是旧颜色。
         tintView.autoresizingMask = [.width, .height]
         tintView.frame = background.bounds
         background.addSubview(tintView)
@@ -82,7 +86,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         searchField.font = .systemFont(ofSize: 30, weight: .regular)
-        searchField.textColor = .white
+        searchField.textColor = .labelColor
         searchField.placeholderString = "搜索应用"
         searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = true
@@ -125,8 +129,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
 
     // MARK: - 显示与关闭
 
-    func show(selecting initialRow: Int = 0) {
-        dbg("show() 被调用 initialRow=\(initialRow)")
+    func show() {
+        dbg("show() 被调用")
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // 调试用：--query 预填搜索词
@@ -137,16 +141,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             searchField.stringValue = ""
         }
         refresh()
-
-        // ⌘Tab 唤起时默认落在第二个：第一个通常是当前应用
-        if initialRow > 0, results.count > 1 {
-            selectedIndex = min(initialRow, results.count - 1)
-            currentPage = selectedIndex / pageSize
-            layoutWindow()
-            tableView.reloadData()
-            tableView.selectRowIndexes(IndexSet(integer: selectedIndex % pageSize),
-                                       byExtendingSelection: false)
-        }
 
         // 与密码管理器一致：强制激活，否则 borderless 面板收不到键盘
         NSApp.activate(ignoringOtherApps: true)
@@ -232,6 +226,11 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
                            width: screen.frame.width,
                            height: screen.frame.height)
         return frame.contains(cgPoint)
+    }
+
+    /// 关闭面板并把焦点还给之前的应用
+    func closePanel() {
+        dismiss(restoreFocus: true)
     }
 
     private func dismiss(restoreFocus: Bool) {
@@ -366,69 +365,62 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        dbg("doCommandBy \(commandSelector)")
         switch commandSelector {
         case #selector(NSResponder.moveUp(_:)):
             moveSelection(by: -1)
             return true
+
         case #selector(NSResponder.moveDown(_:)):
             moveSelection(by: 1)
             return true
+
         case #selector(NSResponder.insertNewline(_:)):
             executeSelected()
             return true
+
+        case #selector(NSResponder.cancelOperation(_:)):
+            // Esc：关面板。必须在本地处理——之前靠一个全局 tap 兜底，
+            // 那个 tap 是误判「Esc 失效 = 焦点问题」的产物，真因是
+            // Caps 层映射残留，跟焦点无关。
+            closePanel()
+            return true
+
+        // 左右键：光标还能动就让 field editor 自己处理（返回 false），
+        // 到两端才翻页。
+        case #selector(NSResponder.moveLeft(_:)):
+            guard atStartOfInput() else { return false }
+            changePage(by: -1)
+            return true
+
+        case #selector(NSResponder.moveRight(_:)):
+            guard atEndOfInput() else { return false }
+            changePage(by: 1)
+            return true
+
         default:
             return false
         }
     }
 
-    // MARK: - ⌘Tab 切换器入口
-
-    func switcherMove(by delta: Int) {
-        guard isVisible else { return }
-        moveSelection(by: delta)
+    /// 面板自己是 first responder 时的 Esc（搜索框有焦点时走上面的 doCommandBy）
+    override func cancelOperation(_ sender: Any?) {
+        closePanel()
     }
 
-    func switcherCommit() {
-        guard isVisible else { return }
-        executeSelected()
-    }
-
-    func switcherCancel() {
-        guard isVisible else { return }
-        dismiss(restoreFocus: true)
-    }
-
-    /// 全局 tap 转发进来的按键；返回 true 表示已处理、应吞掉
-    func handlePanelKey(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        guard isVisible else { return false }
-
-        // ⌘1-⌘8 页内快速执行
-        if flags.contains(.maskCommand),
-           let number = numberKey(from: keyCode), number >= 1, number <= pageSize {
-            executePageRow(number - 1)
+    /// ⌘1–⌘8：执行当前页对应项。
+    ///
+    /// 用 `performKeyEquivalent` 而不是 `keyDown`：带 ⌘ 的组合键会先走这里，
+    /// 而且是窗口级的，不依赖搜索框焦点。直接解析字符比维护键码映射表可靠。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+            let chars = event.charactersIgnoringModifiers,
+            let digit = Int(chars),
+            digit >= 1, digit <= pageSize, isVisible
+        {
+            executePageRow(digit - 1)
             return true
         }
-
-        // 左右键：光标还能动就让输入框处理，到两端才翻页
-        if flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty {
-            if keyCode == 123, atStartOfInput() {
-                changePage(by: -1)
-                return true
-            }
-            if keyCode == 124, atEndOfInput() {
-                changePage(by: 1)
-                return true
-            }
-        }
-        return false
-    }
-
-    /// 数字键 1-9 的键码
-    private func numberKey(from keyCode: Int64) -> Int? {
-        let map: [Int64: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
-                                 22: 6, 26: 7, 28: 8, 25: 9]
-        return map[keyCode]
+        return super.performKeyEquivalent(with: event)
     }
 
     private func atStartOfInput() -> Bool {
@@ -526,24 +518,24 @@ final class ResultCell: NSTableCellView {
         addSubview(iconView)
 
         nameLabel.font = .systemFont(ofSize: 16, weight: .regular)
-        nameLabel.textColor = .white
+        nameLabel.textColor = .labelColor
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         pathLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
-        pathLabel.textColor = NSColor.white.withAlphaComponent(0.55)
+        pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
         addSubview(pathLabel)
 
         shortcutLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        shortcutLabel.textColor = NSColor.white.withAlphaComponent(0.6)
+        shortcutLabel.textColor = .tertiaryLabelColor
         shortcutLabel.alignment = .right
         addSubview(shortcutLabel)
 
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 8
         badge.layer?.borderWidth = 2
-        badge.layer?.borderColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 1).cgColor
+        badge.layer?.borderColor = NSColor.separatorColor.cgColor
         badge.isHidden = true
         addSubview(badge)
     }
@@ -568,9 +560,11 @@ final class ResultCell: NSTableCellView {
         pathLabel.stringValue = path
         shortcutLabel.stringValue = shortcut
         iconView.image = icon
-        nameLabel.textColor = .white
-        pathLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.8 : 0.55)
-        shortcutLabel.textColor = NSColor.white.withAlphaComponent(selected ? 0.95 : 0.6)
+        // 选中行是深青色高亮，文字必须转白——否则深色文字压在深青上看不清
+        nameLabel.textColor = selected ? .white : .labelColor
+        pathLabel.textColor = selected ? NSColor.white.withAlphaComponent(0.8) : .secondaryLabelColor
+        shortcutLabel.textColor =
+            selected ? NSColor.white.withAlphaComponent(0.7) : .tertiaryLabelColor
 
         // 图标右上角：绿点=有窗口，灰点=后台运行，无点=未运行
         switch state {

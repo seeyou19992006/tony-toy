@@ -10,11 +10,8 @@ struct HotkeyMappingEntry: Codable {
     let to: AppActionSpec
 }
 
-struct HotkeyKeySpec: Codable {
-    let key: String
-    let modifiers: [String]?
-}
-
+// `HotkeyKeySpec` 已下沉到 `src/Core/HotkeyKeySpec.swift`：
+// 配置层的 `SettingItem.hotkey` 也用它，而 Core 必须能脱离 AppKit 单独编译。
 struct HotkeyResolvedMapping {
     let sourceCode: Int64
     let sourceModifiers: CGEventFlags
@@ -77,10 +74,33 @@ final class HotkeyMappingConfigStore {
     }
 
     func loadMappings() throws -> [HotkeyResolvedMapping] {
+        // 优先从统一配置读。迁移后旧文件会被 `ensureConfigExists` 用模板
+        // 重建，如果还读旧文件，配置窗口里改的映射就永远不生效——
+        // 配置只能有一个真相源。
+        if let entries = unifiedMappings() {
+            return try entries.map(resolve)
+        }
+
+        // 兼容：还没迁移的老配置
         try ensureConfigExists()
         let data = try Data(contentsOf: configURL)
         let config = try JSONDecoder().decode(HotkeyMappingConfig.self, from: data)
         return try config.mappings.map(resolve)
+    }
+
+    /// 从 `config.json` 的 `features.hotkeyLayer.values.mappings` 读出映射。
+    ///
+    /// 返回 nil 表示统一配置里没有这一项（还没迁移或用户清空了），
+    /// 由调用方回退旧文件。
+    private func unifiedMappings() -> [HotkeyMappingEntry]? {
+        guard let config = try? ConfigStore.shared.load(),
+            let value = config.features[FeatureID.hotkeyLayer]?.values["mappings"],
+            case .array(let list) = value
+        else { return nil }
+
+        // JSONValue → 强类型：借道 JSON 编解码，避免手写 20 行解构
+        guard let data = try? JSONEncoder().encode(JSONValue.array(list)) else { return nil }
+        return try? JSONDecoder().decode([HotkeyMappingEntry].self, from: data)
     }
 
     func ensureConfigExists() throws {

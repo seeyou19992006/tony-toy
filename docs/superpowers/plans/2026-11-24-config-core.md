@@ -11,6 +11,8 @@
 **关键前提（已确认）：**
 - `scripts/build.sh` 用 `find src -type f -name '*.swift'` 收集源文件，**新建子目录无需改构建脚本**。
 - 测试用 `swiftc` 手动列文件编译后直接运行，新测试文件**必须**加到 `tests/run_all.sh`。
+- **测试文件不能用顶层语句**：`swiftc` 多文件编译只允许 `main.swift` 有顶层代码。所有测试入口必须写成 `@main struct XXXTests { static func main() { ... } }`，与 `tests/MenuStateStoreTests.swift` 一致。
+- **JSONValue 的已知限制**：`init(from:)` 按 Bool → Int → Double 顺序探测，所以整数值的 double（如 `1.0`）编码后解码回来会变成 `.int(1)`。**测试里不要用整数值的 double 做往返断言**，用 `3.14` 这类真小数。若将来某个 Feature 需要严格区分 int/double，需要改探测策略（用 `NSNumber` 判断），本阶段不处理。
 - 项目没有第三方依赖，不要引入 SPM。
 
 ---
@@ -30,6 +32,23 @@
 | `src/UI/Settings/Panes/*.swift` | 9 个空分区视图 |
 | `tests/JSONValueTests.swift` | JSONValue 编解码测试 |
 | `tests/ConfigStoreTests.swift` | 配置读写 + 迁移测试 |
+
+---
+
+## 审查遗留项（各任务的验收附加条件）
+
+代码质量审查在各阶段提出的跟进项，必须在该任务完成时兑现，否则会成为永久技术债。
+
+| 来源 | 事项 | 兑现位置 |
+|---|---|---|
+| Task 3 审查 | 补 `updateFeature` + `onChange` 测试：回调触发时磁盘已是新值、未触碰字段被保留 | Task 4 测试步骤 |
+| Task 3 审查 | 兑现 `load() throws` 决策：引入真实抛错场景（版本不兼容/迁移失败），或降级为不抛 | Task 6 验收 |
+| Task 3 审查 | **语义一致性**：设计文档写「`save()` → 落盘 → 通知 Feature」，但实现只有 `updateFeature` 触发 `onChange`。配置窗口保存必须走 `updateFeature`，或在 save 后显式广播，否则热更新静默失效 | Task 7-8 前拍板 |
+| Task 2 审查 | 默认值归属：`isEnabled` 的 `?? true` 对 `switcher`/`mouseFollow` 与旧默认相反（旧为 `false`）。应由 Feature 自己声明默认值 | ✅ Task 5 已落地（`defaultEnabled`） |
+| Task 6 审查 | **`startAll()` 用 `try?` 吞掉 `futureVersion`**：版本过高时静默跑默认值，语义不是「拒绝加载」。今天不丢数据（`updateFeature`/`ConfigMigrator` 都会透传错误），但 Task 7+ 一旦出现「整份 save」路径，内存里的 `.default` 会覆盖新版本配置 | **Task 9 必须**：`startAll()` 区分错误 + `ConfigStore` 只读模式 + 菜单栏告警 |
+| Task 6 审查 | `stopAll()` 无调用点、无测试——若第一阶段结束仍未接入退出流程，应删除而不是留死代码 | Task 9 |
+| Task 8 审查 | **`inputAliases` 是孤儿节点**：迁移把它写进 `features.inputAliases`，但 9 个分区里没有它的位置（只有 7 个 Feature 有 Pane）。它是「键名 → 键码」的固定数据表，用户通常不需要改 | 第二阶段：要么归到「高级」只读页，要么从 `FeatureID` 移除、迁移时直接丢弃 |
+| Task 8 审查 | 切换分区时销毁重建 Pane，会丢输入内容和滚动位置。当前 Pane 都是占位页无影响 | 第二阶段做真实控件时，按 `item.id` 缓存 Pane 实例 + 显示时从 `ConfigStore` 刷新 |
 
 ---
 
@@ -104,10 +123,15 @@ func assertTrue(_ condition: Bool, _ message: String) {
     }
 }
 
-testJSONValueRoundTrip()
-testJSONValueFromBareJSON()
-testJSONValueAccessors()
-print("JSONValueTests all passed")
+@main
+struct JSONValueTests {
+    static func main() {
+        testJSONValueRoundTrip()
+        testJSONValueFromBareJSON()
+        testJSONValueAccessors()
+        print("JSONValueTests all passed")
+    }
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -302,10 +326,15 @@ func assertTrue(_ condition: Bool, _ message: String) {
     }
 }
 
-testConfigDefaults()
-testConfigRoundTrip()
-testFeatureEnabledLookup()
-print("ConfigStoreTests all passed")
+@main
+struct ConfigStoreTests {
+    static func main() {
+        testConfigDefaults()
+        testConfigRoundTrip()
+        testFeatureEnabledLookup()
+        print("ConfigStoreTests all passed")
+    }
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -490,12 +519,12 @@ func testConfigStoreCorruptedFile() {
 
 ```
 
-在文件末尾的调用列表里追加：
+在 `ConfigStoreTests.main()` 里追加调用：
 
 ```swift
-testConfigStoreSaveAndLoad()
-testConfigStoreCreatesDirectory()
-testConfigStoreCorruptedFile()
+        testConfigStoreSaveAndLoad()
+        testConfigStoreCreatesDirectory()
+        testConfigStoreCorruptedFile()
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -629,27 +658,37 @@ git commit -m "feat(core): 新增 ConfigStore 读写与损坏备份"
 - Create: `src/Core/ConfigMigrator.swift`
 - Modify: `tests/ConfigStoreTests.swift`
 
+**关键前提：4 个旧文件的格式各不相同（已实测确认）**
+
+| 文件 | 顶层键 | 迁移到 |
+|---|---|---|
+| `hotkeys.json` | `version` + `mappings` | `features.hotkeyLayer.values.mappings` |
+| `caps-mappings.json` | `version` + `mappings` | `features.capsLayer.values.mappings` |
+| `mouse-layer.json` | `version` + `activation_button` + `mappings` | `features.mouseLayer.values`（`mappings` + `activationButton`） |
+| `input-aliases.json` | `version` + `keyboard_keys` + `modifiers` + `mouse_inputs` + `actions` | `features.inputAliases.values`（**4 个独立字典，没有 mappings**） |
+
+**不能统一按 `mappings` 处理**——`input-aliases.json` 没有这个键，按统一逻辑会迁移失败并静默丢失 60+ 个键位别名。这是本任务最容易踩的坑。
+
 - [ ] **Step 1: 写失败的测试**
 
-在 `tests/ConfigStoreTests.swift` 的 `assertTrue` 之前插入：
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入这 4 个测试函数：
 
 ```swift
-func testMigratorImportsLegacyFiles() {
+func testMigratorImportsMappingFiles() {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
     try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
-    // 造三个旧格式文件
-    let capsJSON = """
-    {"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}
-    """
+    // Caps 层：from 是单个字符
+    let capsJSON = #"{"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}"#
     try! capsJSON.write(
         to: tempDir.appendingPathComponent("caps-mappings.json"),
         atomically: true, encoding: .utf8)
 
+    // 全局快捷键：from 是组合键
     let hotkeysJSON = """
-    {"version":1,"mappings":[{"from":{"key":"escape","modifiers":["command"]},
+    {"version":1,"mappings":[{"from":{"key":"escape","modifiers":["command"]}, \
     "to":{"key":"grave_accent_and_tilde","modifiers":["command"]}}]}
     """
     try! hotkeysJSON.write(
@@ -658,56 +697,123 @@ func testMigratorImportsLegacyFiles() {
 
     let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
     let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
 
-    let migrated = try! migrator.migrateIfNeeded()
+    assertTrue(result.didMigrate, "首次迁移应返回 didMigrate = true")
+    assertTrue(result.migratedFeatureCount == 2, "应迁移 2 个功能节点")
 
-    assertTrue(migrated.capitalLayerMappingCount == 1, "Caps 层应迁入 1 条")
-    assertTrue(migrated.config.features["capsLayer"] != nil, "应生成 capsLayer 节点")
-    assertTrue(migrated.config.features["hotkeyLayer"] != nil, "应生成 hotkeyLayer 节点")
+    let capsMappings = result.config.features["capsLayer"]?.values["mappings"]
+    guard case .array(let capsList)? = capsMappings else {
+        assertTrue(false, "capsLayer.values.mappings 应为数组")
+        return
+    }
+    assertTrue(capsList.count == 1, "Caps 层应迁入 1 条")
 
-    // 旧文件应重命名，不再存在原路径
-    assertTrue(
-        !FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("caps-mappings.json").path),
-        "旧文件应被重命名")
-    assertTrue(
-        FileManager.default.fileExists(
-            atPath: tempDir.appendingPathComponent("caps-mappings.json.migrated").path),
-        "旧文件应保留为 .migrated")
-    print("testMigratorImportsLegacyFiles passed")
+    let hotkeyMappings = result.config.features["hotkeyLayer"]?.values["mappings"]
+    guard case .array(let hotkeyList)? = hotkeyMappings else {
+        assertTrue(false, "hotkeyLayer.values.mappings 应为数组")
+        return
+    }
+    assertTrue(hotkeyList.count == 1, "全局快捷键应迁入 1 条")
+
+    print("testMigratorImportsMappingFiles passed")
 }
 
-func testMigratorIsIdempotent() {
+func testMigratorImportsInputAliases() {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
     try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
+    // 真实结构：没有 mappings，是 4 个独立字典
+    let aliasesJSON = """
+    {"version":1,"keyboard_keys":{"a":{"key_code":0}},"modifiers":{"command":{"flag":"command"}},
+    "mouse_inputs":{"left_click":{"kind":"button","button_number":0}},
+    "actions":{"volume_scroll":{"kind":"volume_scroll"}}}
+    """
+    try! aliasesJSON.write(
+        to: tempDir.appendingPathComponent("input-aliases.json"),
+        atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
+
+    let values = result.config.features["inputAliases"]?.values
+    assertTrue(values != nil, "应生成 inputAliases 节点")
+    assertTrue(values?["keyboardKeys"] != nil, "应迁入 keyboardKeys")
+    assertTrue(values?["modifiers"] != nil, "应迁入 modifiers")
+    assertTrue(values?["mouseInputs"] != nil, "应迁入 mouseInputs")
+    assertTrue(values?["actions"] != nil, "应迁入 actions")
+    print("testMigratorImportsInputAliases passed")
+}
+
+func testMigratorPreservesActivationButton() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let mouseJSON = """
+    {"version":1,"activation_button":"button5",
+    "mappings":[{"from":{"input":"scroll_wheel"},"to":{"action":"volume_scroll"}}]}
+    """
+    try! mouseJSON.write(
+        to: tempDir.appendingPathComponent("mouse-layer.json"),
+        atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store)
+    let result = try! migrator.migrateIfNeeded()
+
+    let values = result.config.features["mouseLayer"]?.values
+    assertTrue(
+        values?["activationButton"] == .string("button5"),
+        "应保留 activation_button，否则鼠标侧键层功能失效")
+    print("testMigratorPreservesActivationButton passed")
+}
+
+func testMigratorRenamesLegacyFilesAndIsIdempotent() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let capsURL = tempDir.appendingPathComponent("caps-mappings.json")
+    try! #"{"version":1,"mappings":[{"from":"e","to":{"key":"up_arrow"}}]}"#.write(
+        to: capsURL, atomically: true, encoding: .utf8)
+
     let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
     let migrator = ConfigMigrator(directory: tempDir, store: store)
 
-    _ = try! migrator.migrateIfNeeded()
-    let configAfterFirst = try! store.load()
+    let first = try! migrator.migrateIfNeeded()
+    assertTrue(first.didMigrate, "首次应执行迁移")
+
+    // 旧文件应重命名为 .migrated
+    assertTrue(
+        !FileManager.default.fileExists(atPath: capsURL.path),
+        "旧文件应被移走")
+    assertTrue(
+        FileManager.default.fileExists(
+            atPath: tempDir.appendingPathComponent("caps-mappings.json.migrated").path),
+        "旧文件应保留为 .migrated")
 
     // 第二次调用不应改变任何东西
-    _ = try! migrator.migrateIfNeeded()
+    let configAfterFirst = try! store.load()
+    let second = try! migrator.migrateIfNeeded()
     let configAfterSecond = try! store.load()
 
+    assertTrue(second.didMigrate == false, "重复迁移应返回 didMigrate = false")
+    assertTrue(
+        second.migratedFeatureCount == 0,
+        "重复迁移不应再计数，实际: \(second.migratedFeatureCount)")
     assertTrue(configAfterFirst == configAfterSecond, "重复迁移应幂等")
-    print("testMigratorIsIdempotent passed")
+    print("testMigratorRenamesLegacyFilesAndIsIdempotent passed")
 }
-
-```
-
-末尾追加调用：
-
-```swift
-testMigratorImportsLegacyFiles()
-testMigratorIsIdempotent()
-```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swiftc ... 2>&1 | head -5`（用 Step 5 的完整命令）
+Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/ConfigStore.swift src/DebugLog.swift tests/ConfigStoreTests.swift -o /tmp/config-tests 2>&1 | head -5`
 Expected: FAIL，报错 `cannot find type 'ConfigMigrator' in scope`
 
 - [ ] **Step 3: 实现 ConfigMigrator**
@@ -717,51 +823,73 @@ Expected: FAIL，报错 `cannot find type 'ConfigMigrator' in scope`
 ```swift
 import Foundation
 
-/// 把 5 个旧配置文件迁移到统一的 config.json。
+/// 把旧配置文件迁移到统一的 config.json。
 ///
 /// 策略：
-/// - config.json 已存在 → 不动，直接返回。
-/// - 旧文件保留（重命名为 .migrated），迁移出错时用户能恢复。
+/// - `config.json` 已存在 → 不动，直接返回。
+/// - 旧文件保留（重命名为 `.migrated`），迁移出错时用户能恢复。
+///   改名必须等 `config.json` **落盘成功之后**再做，任何时刻至少留一份可恢复的数据。
 /// - 迁移幂等：第二次调用时旧文件已不存在，直接返回。
+///
+/// **注意 4 个旧文件格式不同**：`hotkeys` / `caps-mappings` / `mouse-layer`
+/// 都有 `mappings` 数组，但 `input-aliases` 是 4 个独立字典。
+/// 统一按 `mappings` 处理会让别名静默丢失。
 final class ConfigMigrator {
     struct Result {
         let config: TonyToyConfig
         let didMigrate: Bool
-        /// 迁移成功的 Caps 映射条数（供测试断言）
-        let capitalLayerMappingCount: Int
+        /// 迁移成功的功能节点数（供测试断言）
+        let migratedFeatureCount: Int
     }
 
     private let directory: URL
     private let store: ConfigStore
+    /// UserDefaults 由外部注入：生产用 `.standard`，测试注入独立 suite。
+    /// 写死 `UserDefaults.standard` 会让 6 个旧 key 的迁移逻辑无法在测试里覆盖。
+    private let defaults: UserDefaults
 
-    /// 旧文件名 → 在新配置里的 feature id
-    private static let legacyFiles: [(fileName: String, featureID: String)] = [
-        ("caps-mappings.json", "capsLayer"),
-        ("hotkeys.json", "hotkeyLayer"),
-        ("mouse-layer.json", "mouseLayer"),
-        ("input-aliases.json", "inputAliases"),
+    /// 有 `mappings` 数组的文件 → 对应的 feature id
+    private static let mappingFiles: [(fileName: String, featureID: String)] = [
+        ("caps-mappings.json", FeatureID.capsLayer),
+        ("hotkeys.json", FeatureID.hotkeyLayer),
+        ("mouse-layer.json", FeatureID.mouseLayer),
     ]
 
-    init(directory: URL, store: ConfigStore) {
+    /// `input-aliases.json` 的 4 个字典：JSON 键名 → 配置键名
+    private static let aliasSections: [(jsonKey: String, configKey: String)] = [
+        ("keyboard_keys", "keyboardKeys"),
+        ("modifiers", "modifiers"),
+        ("mouse_inputs", "mouseInputs"),
+        ("actions", "actions"),
+    ]
+
+    init(directory: URL, store: ConfigStore, defaults: UserDefaults = .standard) {
         self.directory = directory
         self.store = store
+        self.defaults = defaults
     }
 
     func migrateIfNeeded() throws -> Result {
         let configURL = directory.appendingPathComponent("config.json")
 
-        // 已经有统一配置，直接返回
+        // 已经有统一配置，直接返回。
+        // migratedFeatureCount 是「本次迁移了几个节点」，早退时必然是 0，
+        // 不能返回 features.count——那会把「已有配置」误报成「刚迁移完」。
         if FileManager.default.fileExists(atPath: configURL.path) {
             let config = try store.load()
             return Result(
                 config: config, didMigrate: false,
-                capitalLayerMappingCount: Self.mappingCount(in: config, featureID: "capsLayer"))
+                migratedFeatureCount: 0)
         }
 
         var config = TonyToyConfig.default
-        var capsMappingCount = 0
+        var migratedCount = 0
+        /// 待改名的旧文件。必须等 config.json 落盘成功后再改名——
+        /// 否则 save 失败时旧文件已不在原路径，下次启动会迁移出空配置。
+        var pendingMoves: [URL] = []
 
-        for (fileName, featureID) in Self.legacyFiles {
+        // 1. 有 mappings 数组的三个文件
+        for (fileName, featureID) in Self.mappingFiles {
             let fileURL = directory.appendingPathComponent(fileName)
             guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
@@ -773,74 +901,117 @@ final class ConfigMigrator {
                 continue
             }
 
-            config.features[featureID] = FeatureConfig(
-                isEnabled: true,
-                values: ["mappings": .array(mappings)]
-            )
+            var values: [String: JSONValue] = ["mappings": .array(mappings)]
 
-            if featureID == "capsLayer" {
-                capsMappingCount = mappings.count
+            // activation_button 是 mouse-layer 独有的键（不迁过去侧键层功能就失效了）。
+            // 只在 mouseLayer 分支读取，避免将来别的文件加同名键时静默泄漏。
+            if featureID == FeatureID.mouseLayer,
+                let activationButton = root.string("activation_button")
+            {
+                values["activationButton"] = .string(activationButton)
             }
 
-            // 保留旧文件为 .migrated，不删除
-            let migratedURL = fileURL.appendingPathExtension("migrated")
-            try? FileManager.default.removeItem(at: migratedURL)
-            try? FileManager.default.moveItem(at: fileURL, to: migratedURL)
-
+            config.features[featureID] = FeatureConfig(isEnabled: true, values: values)
+            migratedCount += 1
+            pendingMoves.append(fileURL)
             dbg("已迁移 \(fileName) → features.\(featureID)（\(mappings.count) 条）")
         }
 
-        // 迁移 UserDefaults 里的 8 个布尔开关
-        config = Self.migrateUserDefaults(into: config)
+        // 2. input-aliases.json：4 个独立字典，不是 mappings
+        let aliasesURL = directory.appendingPathComponent("input-aliases.json")
+        if FileManager.default.fileExists(atPath: aliasesURL.path) {
+            if let data = try? Data(contentsOf: aliasesURL),
+                let root = try? JSONDecoder().decode(JSONValue.self, from: data)
+            {
+                var values: [String: JSONValue] = [:]
+                for (jsonKey, configKey) in Self.aliasSections {
+                    if let section = root.object(jsonKey) {
+                        values[configKey] = .object(section)
+                    }
+                }
+
+                if !values.isEmpty {
+                    config.features[FeatureID.inputAliases] = FeatureConfig(
+                        isEnabled: true, values: values)
+                    migratedCount += 1
+                    pendingMoves.append(aliasesURL)
+                    dbg("已迁移 input-aliases.json（\(values.count) 个分组）")
+                } else {
+                    // 文件在、也能解析，但 4 个键名一个都没命中：可能是格式变了。
+                    // 60+ 个别名会在这里丢掉，不能静默。
+                    dbg("迁移跳过 input-aliases.json：4 个分组键名一个都没命中")
+                }
+            } else {
+                // 读不出来或 JSON 坏掉：同样不能静默丢掉 60+ 个别名
+                dbg("迁移跳过 input-aliases.json：无法读取或解析失败")
+            }
+        }
+
+        // 3. UserDefaults 里的旧布尔开关
+        config = migrateUserDefaults(into: config)
 
         try store.save(config)
 
+        // 旧文件只有在 config.json 落盘成功后才改名：save 抛错时旧文件仍在原路径，
+        // 下次启动会重新迁移，不会变成「只剩 UserDefaults 开关的空配置」。
+        for fileURL in pendingMoves {
+            moveToMigrated(fileURL)
+        }
+
         return Result(
-            config: config, didMigrate: true,
-            capitalLayerMappingCount: capsMappingCount)
+            config: config, didMigrate: true, migratedFeatureCount: migratedCount)
     }
 
     // MARK: - 私有
 
+    /// 保留旧文件为 `.migrated`，不删除——迁移出错时用户能恢复
+    private func moveToMigrated(_ fileURL: URL) {
+        let migratedURL = fileURL.appendingPathExtension("migrated")
+        try? FileManager.default.removeItem(at: migratedURL)
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: migratedURL)
+        } catch {
+            dbg("重命名 \(fileURL.lastPathComponent) 失败: \(error)")
+        }
+    }
+
     /// 把 MenuStateStore 的旧 UserDefaults key 迁到 features[*].isEnabled。
-    /// 保留读取作为兜底，避免升级后开关状态丢失。
-    private static func migrateUserDefaults(into config: TonyToyConfig) -> TonyToyConfig {
+    ///
+    /// 注意 `switcher` 和 `mouseFollow` 的旧默认是 **false**（不是 true），
+    /// 这里只迁移「用户显式设置过」的值，未设置的交给 Feature 自己声明默认值。
+    ///
+    /// 用注入的 `defaults` 而不是 `UserDefaults.standard`：这 6 个 key 的迁移是
+    /// 「升级不丢配置」的一半，写死 standard 就没法在测试里覆盖。
+    private func migrateUserDefaults(into config: TonyToyConfig) -> TonyToyConfig {
         var config = config
-        let defaults = UserDefaults.standard
 
         let mapping: [(legacyKey: String, featureID: String)] = [
-            ("menu.isVolumeEnabled", "mouseLayer"),
-            ("menu.isCapsEnabled", "capsLayer"),
-            ("menu.isHotkeyEnabled", "hotkeyLayer"),
-            ("menu.isCmdTabEnabled", "switcher"),
-            ("menu.isGamepadHomeEnabled", "gamepad"),
+            ("menu.isVolumeEnabled", FeatureID.mouseLayer),
+            ("menu.isCapsEnabled", FeatureID.capsLayer),
+            ("menu.isHotkeyEnabled", FeatureID.hotkeyLayer),
+            ("menu.isCmdTabEnabled", FeatureID.switcher),
+            ("menu.isGamepadHomeEnabled", FeatureID.gamepad),
         ]
 
         for (legacyKey, featureID) in mapping {
             guard defaults.object(forKey: legacyKey) != nil else { continue }
-            let enabled = defaults.bool(forKey: legacyKey)
             var feature = config.features[featureID] ?? FeatureConfig()
-            feature.isEnabled = enabled
+            feature.isEnabled = defaults.bool(forKey: legacyKey)
             config.features[featureID] = feature
         }
 
         // 鼠标跟随是「窗口」分区的设置项，不是独立功能
         if defaults.object(forKey: "menu.isMouseFollowEnabled") != nil {
-            var feature = config.features["switcher"] ?? FeatureConfig()
-            feature.values["mouseFollow"] = .bool(defaults.bool(forKey: "menu.isMouseFollowEnabled"))
-            config.features["switcher"] = feature
+            var feature = config.features[FeatureID.switcher] ?? FeatureConfig()
+            feature.values["mouseFollow"] = .bool(
+                defaults.bool(forKey: "menu.isMouseFollowEnabled"))
+            config.features[FeatureID.switcher] = feature
         }
 
         return config
     }
-
-    private static func mappingCount(in config: TonyToyConfig, featureID: String) -> Int {
-        guard let value = config.features[featureID]?.values["mappings"],
-            case .array(let mappings) = value
-        else { return 0 }
-        return mappings.count
-    }
 }
+```
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -851,17 +1022,113 @@ swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift \
        src/DebugLog.swift tests/ConfigStoreTests.swift \
        -o /tmp/config-tests && /tmp/config-tests
 ```
-Expected: 输出 `ConfigStoreTests all passed`
+Expected: 输出 `ConfigStoreTests all passed`（15 个测试全过）
 
 - [ ] **Step 5: 更新 run_all.sh**
 
-在 Task 3 的 swiftc 调用里加上 `"$REPO_ROOT/src/Core/ConfigMigrator.swift" \`。
+在 Step 3 的编译块里加上 `"$REPO_ROOT/src/Core/ConfigMigrator.swift" \`。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 补 updateFeature + onChange 测试（审查遗留项）**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testUpdateFeatureNotifiesAndPersists() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 先放一个无关字段，验证 updateFeature 不会整份覆盖
+    var initial = TonyToyConfig.default
+    initial.general.showMenuBarIcon = false
+    try! store.save(initial)
+
+    var received: TonyToyConfig?
+    var diskStateDuringCallback: TonyToyConfig?
+    store.onChange = { config in
+        received = config
+        // 在回调内部读盘：如果实现是「先通知后落盘」，这里读到的还是旧值
+        diskStateDuringCallback = try? store.load()
+    }
+
+    try! store.updateFeature(FeatureID.gamepad) { feature in
+        feature.isEnabled = false
+    }
+
+    assertTrue(received != nil, "onChange 应被触发")
+    assertTrue(received?.isEnabled(FeatureID.gamepad) == false, "回调应带新值")
+    assertTrue(
+        received?.general.showMenuBarIcon == false,
+        "未触碰的字段应保留，不能被整份覆盖")
+    assertTrue(
+        diskStateDuringCallback?.isEnabled(FeatureID.gamepad) == false,
+        "回调触发时磁盘应已是新值（验证 save 在 onChange 之前）")
+    print("testUpdateFeatureNotifiesAndPersists passed")
+}
+
+```
+
+并在 `ConfigStoreTests.main()` 里追加 `testUpdateFeatureNotifiesAndPersists()`。
+
+- [ ] **Step 7: 补 UserDefaults 迁移测试（审查遗留项）**
+
+`UserDefaults` 由外部注入（`init(directory:store:defaults:)`，默认 `.standard`），
+测试用独立 suite，不污染真实偏好：
+
+```swift
+func testMigratorImportsUserDefaults() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-migrate-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 用独立 suite，不污染真实 UserDefaults
+    let suiteName = "tonytoy-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    // 显式设置三个：两个旧默认关闭的 + 一个旧默认开启的
+    defaults.set(false, forKey: "menu.isCmdTabEnabled")
+    defaults.set(true, forKey: "menu.isCapsEnabled")
+    defaults.set(true, forKey: "menu.isMouseFollowEnabled")
+    // menu.isVolumeEnabled 不设，验证「未设置不创建节点」
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let migrator = ConfigMigrator(directory: tempDir, store: store, defaults: defaults)
+    let result = try! migrator.migrateIfNeeded()
+
+    assertTrue(
+        result.config.isEnabled(FeatureID.switcher) == false,
+        "⌘Tab 接管的旧默认是关闭")
+    assertTrue(
+        result.config.isEnabled(FeatureID.capsLayer) == true,
+        "Caps 层旧默认是开启")
+    assertTrue(
+        result.config.features[FeatureID.switcher]?.values["mouseFollow"] == .bool(true),
+        "鼠标跟随应迁到 switcher.values.mouseFollow")
+    assertTrue(
+        result.config.features[FeatureID.mouseLayer] == nil,
+        "未设置的 menu.isVolumeEnabled 不应创建节点")
+    print("testMigratorImportsUserDefaults passed")
+}
+```
+
+并在 `ConfigStoreTests.main()` 里追加 `testMigratorImportsUserDefaults()`。
+
+- [ ] **Step 8: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 9: 提交**
 
 ```bash
 git add src/Core/ConfigMigrator.swift tests/ConfigStoreTests.swift tests/run_all.sh
-git commit -m "feat(core): 新增配置迁移，自动导入 5 个旧文件"
+git commit -m "feat(core): 新增配置迁移，按文件格式分别导入旧配置"
 ```
 
 ---
@@ -870,8 +1137,117 @@ git commit -m "feat(core): 新增配置迁移，自动导入 5 个旧文件"
 
 **Files:**
 - Create: `src/Core/Feature.swift`
+- Modify: `src/Core/TonyToyConfig.swift`（`isEnabled` 接受自定义默认值）
+- Modify: `tests/ConfigStoreTests.swift`（补默认值归属测试）
 
-- [ ] **Step 1: 实现协议**
+**设计决策：默认值必须由 Feature 声明（审查遗留项）**
+
+Task 2 审查发现一个语义错误：`isEnabled` 硬编码 `?? true`，注释还写「保持升级前后行为一致」。但 `MenuStateStore` 里 `isCmdTabEnabled` 和 `isMouseFollowEnabled` 的默认是 **`false`**——
+
+```swift
+// MenuStateStore.swift:15-16
+isCmdTabEnabled: false,
+isMouseFollowEnabled: false,
+```
+
+所以「全开」不是「一致」，而是**行为回归**：⌘Tab 接管会抢系统快捷键、鼠标跟随会改变窗口切换行为，用户会认为应用坏了。
+
+**修复**：`Feature` 协议加 `defaultEnabled` 属性，各 Feature 自己声明默认值；`TonyToyConfig.isEnabled` 接受默认值参数。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testFeatureDefaultEnabledDeclaredByFeature() {
+    // 未配置过的功能应使用 Feature 自己声明的默认值，
+    // 而不是硬编码 true——switcher 和 mouseFollow 的旧默认是 false。
+    let config = TonyToyConfig.default
+
+    assertTrue(
+        config.isEnabled("switcher", defaultEnabled: false) == false,
+        "⌘Tab 接管旧默认关闭，未配置时应为 false")
+    assertTrue(
+        config.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "Caps 层旧默认开启")
+
+    // 已配置过的功能，配置值优先
+    var configured = config
+    configured.features["switcher"] = FeatureConfig(isEnabled: true, values: [:])
+    assertTrue(
+        configured.isEnabled("switcher", defaultEnabled: false) == true,
+        "配置值应优先于默认值")
+    print("testFeatureDefaultEnabledDeclaredByFeature passed")
+}
+
+func testFeatureProtocolDefaults() {
+    // 一个最小的 Feature 实现，验证协议默认实现
+    final class StubFeature: Feature {
+        let id = "stub"
+        let title = "桩"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool { false }
+        private(set) var started = false
+        private(set) var stopped = false
+        func start() { started = true }
+        func stop() { stopped = true }
+    }
+
+    let feature = StubFeature()
+
+    // 默认 apply 实现：isEnabled 为 true 启动，false 停止
+    feature.apply(FeatureConfig(isEnabled: true))
+    assertTrue(feature.started, "isEnabled = true 应调用 start()")
+
+    feature.apply(FeatureConfig(isEnabled: false))
+    assertTrue(feature.stopped, "isEnabled = false 应调用 stop()")
+    print("testFeatureProtocolDefaults passed")
+}
+
+```
+
+在 `ConfigStoreTests.main()` 里追加两个调用。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/ConfigStore.swift src/Core/ConfigMigrator.swift src/DebugLog.swift tests/ConfigStoreTests.swift -o /tmp/config-tests 2>&1 | head -5`
+Expected: FAIL，报错 `cannot find type 'Feature' in scope` 和 `extra argument 'defaultEnabled' in call`
+
+- [ ] **Step 3: 修改 `TonyToyConfig.isEnabled`**
+
+把现有实现：
+
+```swift
+    /// 读取某功能的开关状态。未配置过的功能默认启用。
+    ///
+    /// 注意：这不是所有功能的旧默认值——`switcher`（⌘Tab 接管）和
+    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭。默认值的最终归属
+    /// 应由各 Feature 自己声明（见 Task 5 的 `Feature` 协议），
+    /// 这里只是兜底。
+    func isEnabled(_ featureID: String) -> Bool {
+        features[featureID]?.isEnabled ?? true
+    }
+```
+
+改成：
+
+```swift
+    /// 读取某功能的开关状态。
+    ///
+    /// - Parameter featureID: 功能的唯一标识
+    /// - Parameter defaultEnabled: 未配置过时使用的默认值。
+    ///   **必须由 Feature 自己声明**——不是所有功能都默认开启。
+    ///   旧 `UserDefaults` 里 `switcher`（⌘Tab 接管）和 `mouseFollow`
+    ///   的默认是 `false`，硬编码 `true` 会改变这些功能的既有行为。
+    func isEnabled(_ featureID: String, defaultEnabled: Bool = true) -> Bool {
+        features[featureID]?.isEnabled ?? defaultEnabled
+    }
+```
+
+> 保留默认参数 `true` 是为了向后兼容现有测试（`isEnabled("unknown") == true`）。新代码应该始终传 `defaultEnabled`。
+
+- [ ] **Step 4: 实现 Feature 协议**
 
 创建 `src/Core/Feature.swift`：
 
@@ -880,10 +1256,12 @@ import Foundation
 
 /// 一个可配置的功能单元。
 ///
-/// 新增功能只需实现这个协议 + 在 FeatureRegistry 注册一行，
+/// 新增功能只需实现这个协议 + 在 `FeatureRegistry` 注册一行，
 /// 配置窗口自动获得侧边栏条目和设置项绑定。
+///
+/// 设计目标是「新增功能只改 2 处」：一个 Feature 文件 + 一行注册。
 protocol Feature: AnyObject {
-    /// 唯一标识，同时作为 config.json 里 features 的 key
+    /// 唯一标识，同时作为 `config.json` 里 `features` 的 key
     var id: String { get }
 
     /// 侧边栏显示名
@@ -895,64 +1273,94 @@ protocol Feature: AnyObject {
     /// 设置项声明。界面据此渲染控件，不描述布局。
     var settings: [SettingItem] { get }
 
+    /// 从未配置过时的默认开关状态。
+    ///
+    /// **不是所有功能都默认开启**：`switcher`（⌘Tab 接管）和
+    /// `mouseFollow` 在旧 `UserDefaults` 里默认关闭，这里必须如实声明，
+    /// 否则升级会改变用户既有行为。
+    var defaultEnabled: Bool { get }
+
     /// 启动：注册事件 tap、建立 AX 连接等
     func start()
 
     /// 停止：注销 tap、释放资源
     func stop()
 
-    /// 配置变更后热更新。默认实现按 isEnabled 启停。
-    func apply(_ config: FeatureConfig)
+    /// 应用功能自己的配置值（映射表、每页项数等）。默认空实现。
+    ///
+    /// 需要更细配置的 Feature 覆盖这个方法，**不要覆盖 `apply`**——
+    /// `apply` 是模板方法，保证「先启停、再应用 values」的顺序。
+    func applyValues(_ config: FeatureConfig)
 }
 
 extension Feature {
-    /// 默认实现：开关切换时启停，子类可覆盖以处理更细的配置
+    /// 统一的配置应用入口（模板方法）。
+    ///
+    /// 不把它做成协议需求：协议扩展没有 `super`，一旦某个 Feature
+    /// 覆盖了 `apply` 就再也调不回默认实现，「忘记启停」会变成静默 bug。
     func apply(_ config: FeatureConfig) {
         if config.isEnabled {
             start()
+            applyValues(config)
         } else {
             stop()
         }
     }
+
+    /// 默认空实现：只有开关的功能不用覆盖
+    func applyValues(_ config: FeatureConfig) {}
 }
 
-/// 设置项类型描述。只声明「有什么配置、什么类型、默认多少」，不管怎么摆。
+/// 设置项类型描述。
+///
+/// 只声明「有什么配置、什么类型、默认多少」，不管怎么摆——
+/// 布局由各分区视图手写，自动生成布局在本项目规模是负担。
 enum SettingItem {
     case toggle(key: String, title: String, defaultValue: Bool)
-    /// 组合键。复用 HotkeyMappingConfig.swift 里已有的 HotkeyKeySpec，
-    /// 不重复定义——现有类型就是 { key: String, modifiers: [String]? }。
+
+    /// 组合键。复用 `HotkeyMappingConfig.swift` 里已有的 `HotkeyKeySpec`，
+    /// 不重复定义——现有类型就是 `{ key: String, modifiers: [String]? }`。
     case hotkey(key: String, title: String, defaultValue: HotkeyKeySpec)
+
     case number(key: String, title: String, defaultValue: Int, range: ClosedRange<Int>)
+
     case picker(
-        key: String, title: String,
-        options: [(value: String, label: String)], defaultValue: String)
-    /// 映射表：界面用 MappingTableEditor 渲染（第三阶段实现）
+        key: String,
+        title: String,
+        options: [(value: String, label: String)],
+        defaultValue: String
+    )
+
+    /// 映射表：界面用 `MappingTableEditor` 渲染（第三阶段实现）
     case table(key: String, title: String)
 }
 ```
 
-- [ ] **Step 2: 编译验证**
+- [ ] **Step 5: 运行测试确认通过**
 
-Run: `swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/Feature.swift -o /tmp/feature-test 2>&1 | head -5`
-Expected: 无错误（`-o` 需要 main，用 `swiftc -parse` 代替）
-
-实际命令：
+Run:
 ```bash
-swiftc -parse src/Core/JSONValue.swift src/Core/TonyToyConfig.swift src/Core/Feature.swift && echo "语法 OK"
+swiftc src/Core/JSONValue.swift src/Core/TonyToyConfig.swift \
+       src/Core/ConfigStore.swift src/Core/ConfigMigrator.swift \
+       src/Core/Feature.swift src/DebugLog.swift \
+       tests/ConfigStoreTests.swift -o /tmp/config-tests && /tmp/config-tests
 ```
-Expected: 输出 `语法 OK`
+Expected: 输出 `ConfigStoreTests all passed`（17 个测试全过）
 
-- [ ] **Step 3: 确认没有重复定义**
+- [ ] **Step 6: 更新 run_all.sh**
 
-Run: `grep -rn "struct HotkeySpec\|struct HotkeyKeySpec" src/`
-Expected: 只有 `src/LauncherSettings.swift`（HotkeySpec）和 `src/HotkeyMappingConfig.swift`（HotkeyKeySpec）两处。
-本任务**不新增**任何按键类型定义——直接复用 `HotkeyKeySpec`。
+在 ConfigStore 编译块里加上 `"$REPO_ROOT/src/Core/Feature.swift" \`。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 7: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add src/Core/Feature.swift
-git commit -m "feat(core): 新增 Feature 协议与设置项描述"
+git add src/Core/Feature.swift src/Core/TonyToyConfig.swift tests/ConfigStoreTests.swift tests/run_all.sh
+git commit -m "feat(core): 新增 Feature 协议，默认值由功能自己声明"
 ```
 
 ---
@@ -961,25 +1369,263 @@ git commit -m "feat(core): 新增 Feature 协议与设置项描述"
 
 **Files:**
 - Create: `src/Core/FeatureRegistry.swift`
+- Modify: `src/Core/ConfigStore.swift`（版本检查，兑现 `throws`）
+- Modify: `tests/ConfigStoreTests.swift`（补注册表 + 版本测试）
 
-- [ ] **Step 1: 实现注册表**
+**本任务兑现两个审查遗留项**
+
+| 来源 | 事项 | 落地方式 |
+|---|---|---|
+| Task 3 审查 | `load() throws` 是死签名（从不抛错） | 加版本检查：`config.version > currentVersion` 时抛 `ConfigError.futureVersion` |
+| Task 3 审查 | 损坏回退 `.default` 后 `features` 为空，应补齐已注册 Feature 的默认项 | `FeatureRegistry.normalizedConfig(_:)` |
+
+**版本检查的理由**：配置文件可能被更新版本的应用写过（用户降级、dotfiles 跨机器同步）。如果静默接受，新版本的功能配置会被旧版本整份覆盖写回，**数据丢失**。抛错让调用方决定（提示用户升级，或只读不写）。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testConfigStoreRejectsFutureVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 写一个未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = ConfigStore(fileURL: fileURL)
+
+    var thrown: ConfigError?
+    do {
+        _ = try store.load()
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    guard case .futureVersion(let version)? = thrown else {
+        assertTrue(false, "应抛 futureVersion，实际: \(String(describing: thrown))")
+        return
+    }
+    assertTrue(version == 999, "应带出实际版本号")
+
+    // 重要：不能备份也不能删除文件——用户的数据必须原样保留
+    assertTrue(
+        FileManager.default.fileExists(atPath: fileURL.path),
+        "版本过高时不能动用户文件")
+    print("testConfigStoreRejectsFutureVersion passed")
+}
+
+func testConfigStoreAcceptsCurrentVersion() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+    try! store.save(.default)
+
+    // 当前版本必须能正常读
+    let config = try! store.load()
+    assertTrue(config.version == TonyToyConfig.currentVersion, "当前版本应可读")
+    print("testConfigStoreAcceptsCurrentVersion passed")
+}
+
+func testRegistryRegistersAndDeduplicates() {
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        var defaultEnabled: Bool
+        private(set) var appliedConfigs: [FeatureConfig] = []
+
+        init(id: String, defaultEnabled: Bool = true) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+        func applyValues(_ config: FeatureConfig) { appliedConfigs.append(config) }
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    let a = StubFeature(id: "alpha")
+    registry.register(a)
+    registry.register(StubFeature(id: "alpha"))  // 重复
+    registry.register(StubFeature(id: "beta"))
+
+    assertTrue(registry.allFeatures.count == 2, "重复 id 应被忽略")
+    print("testRegistryRegistersAndDeduplicates passed")
+}
+
+func testRegistryFillsDefaultEnabled() {
+    // 损坏回退后 features 为空，每个 Feature 应拿到自己声明的 defaultEnabled
+    final class StubFeature: Feature {
+        let id: String
+        let title: String
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled: Bool
+
+        init(id: String, defaultEnabled: Bool) {
+            self.id = id
+            self.title = id
+            self.defaultEnabled = defaultEnabled
+        }
+
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+
+    // 旧默认关闭的功能（switcher 类比）
+    registry.register(StubFeature(id: "switcher", defaultEnabled: false))
+    // 旧默认开启的功能（capsLayer 类比）
+    registry.register(StubFeature(id: "capsLayer", defaultEnabled: true))
+
+    // 空配置（模拟损坏回退）
+    let normalized = registry.normalizedConfig(TonyToyConfig.default)
+
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == false,
+        "旧默认关闭的功能补齐后仍为关闭")
+    assertTrue(
+        normalized.isEnabled("capsLayer", defaultEnabled: true) == true,
+        "旧默认开启的功能补齐后为开启")
+    assertTrue(normalized.features.count == 2, "应补齐 2 个功能节点")
+    print("testRegistryFillsDefaultEnabled passed")
+}
+
+func testRegistryKeepsExistingConfig() {
+    // 已有配置不能被默认值覆盖
+    final class StubFeature: Feature {
+        let id = "switcher"
+        let title = "切换器"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = false
+        func start() {}
+        func stop() {}
+    }
+
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let store = ConfigStore(fileURL: tempDir.appendingPathComponent("config.json"))
+    let registry = FeatureRegistry(store: store)
+    registry.register(StubFeature())
+
+    var config = TonyToyConfig.default
+    config.features["switcher"] = FeatureConfig(isEnabled: true, values: ["k": .int(1)])
+
+    let normalized = registry.normalizedConfig(config)
+    assertTrue(
+        normalized.isEnabled("switcher", defaultEnabled: false) == true,
+        "已有配置优先于默认值，不能被覆盖")
+    assertTrue(
+        normalized.features["switcher"]?.values["k"] == .int(1),
+        "已有 values 应保留")
+    print("testRegistryKeepsExistingConfig passed")
+}
+```
+
+在 `ConfigStoreTests.main()` 里追加 5 个调用。
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `swiftc ... 2>&1 | head -5`
+Expected: FAIL（`cannot find type 'FeatureRegistry'` / `cannot find 'ConfigError'`）
+
+- [ ] **Step 3: 给 `ConfigStore.load()` 加版本检查**
+
+在 `src/Core/ConfigStore.swift` 里新增（文件顶部，import 之后）：
+
+```swift
+/// 配置加载错误。
+///
+/// 只有「配置文件版本高于本应用」会抛错——此时静默接受会让旧版本
+/// 把新版本的功能配置整份覆盖写回，造成数据丢失。
+enum ConfigError: Error, Equatable {
+    /// 配置文件由更新版本的应用写过
+    case futureVersion(Int)
+}
+```
+
+然后把 `load()` 里的 decode 段改成：
+
+```swift
+        do {
+            let config = try JSONDecoder().decode(TonyToyConfig.self, from: data)
+            // 版本高于本应用：不做任何修改（不备份、不覆盖），交给调用方处理
+            guard config.version <= TonyToyConfig.currentVersion else {
+                dbg(
+                    "配置版本 \(config.version) 高于本应用支持的 \(TonyToyConfig.currentVersion)，拒绝加载"
+                )
+                throw ConfigError.futureVersion(config.version)
+            }
+            return config
+        } catch let error as ConfigError {
+            throw error
+        } catch {
+            dbg("配置解析失败，已备份并回退默认值: \(error)")
+            backupCorruptedFile()
+            return .default
+        }
+```
+
+**关键**：`catch let error as ConfigError` 必须在前面，否则会被下面的 `catch` 吞掉并备份文件（用户数据就丢了）。
+
+- [ ] **Step 4: 实现 FeatureRegistry**
 
 创建 `src/Core/FeatureRegistry.swift`：
 
 ```swift
 import Foundation
 
-/// 功能注册表。应用启动时注册所有 Feature，
-/// 配置窗口和菜单都从这里读，避免各处硬编码。
+/// 功能注册表。
+///
+/// 应用启动时注册所有 `Feature`，配置窗口和菜单都从这里读，
+/// 避免各处硬编码——这是「新增功能只改 2 处」的那 2 处之一。
 final class FeatureRegistry {
     static let shared = FeatureRegistry()
 
     private var features: [Feature] = []
-    private let store = ConfigStore.shared
+    private let store: ConfigStore
 
-    private init() {}
+    init(store: ConfigStore = .shared) {
+        self.store = store
+    }
+
+    // MARK: - 注册
 
     /// 注册一个功能。按注册顺序显示在侧边栏。
+    ///
+    /// 重复 id 会被忽略并记录日志——静默追加会导致侧边栏出现两个同名条目。
     func register(_ feature: Feature) {
         guard !features.contains(where: { $0.id == feature.id }) else {
             dbg("功能 \(feature.id) 重复注册，已忽略")
@@ -994,19 +1640,20 @@ final class FeatureRegistry {
         features.first { $0.id == id }
     }
 
-    /// 应用启动时调用：加载配置并启动所有启用的功能
+    // MARK: - 生命周期
+
+    /// 应用启动时调用：加载配置并启动所有启用的功能。
+    ///
+    /// 配置损坏回退 `.default` 后 `features` 为空，此时**必须**补齐
+    /// 每个已注册 Feature 的默认项——否则所有功能都会被当成「未配置」
+    /// 而拿到错误的默认状态。
     func startAll() {
         let config = (try? store.load()) ?? .default
-        for feature in features {
-            feature.apply(config.features[feature.id] ?? FeatureConfig())
-        }
+        applyAll(normalizedConfig(config))
 
         // 配置外部变更时热更新
         store.onChange = { [weak self] newConfig in
-            guard let self else { return }
-            for feature in self.features {
-                feature.apply(newConfig.features[feature.id] ?? FeatureConfig())
-            }
+            self?.applyAll(newConfig)
         }
     }
 
@@ -1016,28 +1663,62 @@ final class FeatureRegistry {
             feature.stop()
         }
     }
+
+    // MARK: - 内部
+
+    private func applyAll(_ config: TonyToyConfig) {
+        for feature in features {
+            feature.apply(config.features[feature.id] ?? FeatureConfig())
+        }
+    }
+
+    /// 补齐所有已注册 Feature 的默认项。
+    ///
+    /// 只补**缺失**的节点——已有配置优先，不能被默认值覆盖。
+    /// 内部可见（非 private）是为了让测试能直接验证补齐逻辑。
+    func normalizedConfig(_ config: TonyToyConfig) -> TonyToyConfig {
+        var result = config
+        for feature in features where result.features[feature.id] == nil {
+            result.features[feature.id] = FeatureConfig(isEnabled: feature.defaultEnabled)
+        }
+        return result
+    }
 }
 ```
 
-- [ ] **Step 2: 编译验证**
+- [ ] **Step 5: 运行测试确认通过**
 
-Run: `swiftc -parse src/Core/*.swift src/DebugLog.swift && echo "语法 OK"`
-Expected: 输出 `语法 OK`
+Run: 完整 swiftc 命令 + `/tmp/config-tests`
+Expected: 输出 `ConfigStoreTests all passed`（24 个测试全过）
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 6: 更新 `tests/run_all.sh`**，ConfigStore 编译块加上 `"$REPO_ROOT/src/Core/FeatureRegistry.swift" \`
+
+- [ ] **Step 7: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && just build 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 8: 变异测试**
+
+- 删掉 `normalizedConfig` 的补齐循环 → `testRegistryFillsDefaultEnabled` 应失败
+- 把补齐改成无条件覆盖（去掉 `where result.features[feature.id] == nil`）→ `testRegistryKeepsExistingConfig` 应失败
+- 把 `catch let error as ConfigError` 删掉 → `testConfigStoreRejectsFutureVersion` 应失败（且用户文件被备份）
+
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/Core/FeatureRegistry.swift
-git commit -m "feat(core): 新增 FeatureRegistry 功能注册表"
+git add src/Core/FeatureRegistry.swift src/Core/ConfigStore.swift tests/ConfigStoreTests.swift tests/run_all.sh
+git commit -m "feat(core): 新增 FeatureRegistry，配置版本过高时拒绝加载"
 ```
 
 ---
 
-### Task 7: 配置窗口骨架
+### Task 7: Pane 基类
 
 **Files:**
 - Create: `src/UI/Settings/SettingsPaneViewController.swift`
-- Create: `src/UI/Settings/SettingsWindowController.swift`
+
+**为什么先只做基类**：原计划把「窗口控制器」和「9 个 Pane」分成两个任务，但 `SettingsWindowController` 的 `makeSidebarItems()` 会直接引用 9 个具体 Pane 类——Task 7 结束时编译不过，中间状态不可验证。拆成「基类（可独立编译）→ 窗口 + 9 个 Pane（一起，保证可编译）」两半。
 
 - [ ] **Step 1: 实现 Pane 基类**
 
@@ -1049,7 +1730,9 @@ import AppKit
 /// 配置窗口右侧分区的基类。
 ///
 /// 子类在 `viewDidLoad` 里往 `contentStack` 添加行。
-/// 行统一用 `makeRow(title:control:)` 构造，保证全窗口样式一致。
+/// 行统一用 `makeRow(title:control:)` 构造，保证全窗口样式一致——
+/// 手写布局而不是自动生成，因为自动生成布局在项目这个规模会变成负担
+/// （想调个间距都要跟生成器搏斗）。
 class SettingsPaneViewController: NSViewController {
     let paneTitle: String
     let paneIcon: String
@@ -1084,6 +1767,8 @@ class SettingsPaneViewController: NSViewController {
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        // NSScrollView 的 documentView 需要有明确尺寸，
+        // 用容器 + 四边约束把 contentStack 撑开，滚动范围才正确。
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(contentStack)
@@ -1107,6 +1792,8 @@ class SettingsPaneViewController: NSViewController {
 
         view = container
     }
+
+    // MARK: - 行构造
 
     /// 统一的「左标题 + 右控件」行
     func makeRow(title: String, control: NSView) -> NSView {
@@ -1143,7 +1830,39 @@ class SettingsPaneViewController: NSViewController {
 }
 ```
 
-- [ ] **Step 2: 实现窗口控制器**
+- [ ] **Step 2: 编译验证**
+
+Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -5`
+Expected: 输出 `✅ 构建成功:`
+
+> 本任务只新增基类，还没有任何子类引用它，所以应该能独立编译通过。
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add src/UI/Settings/SettingsPaneViewController.swift
+git commit -m "feat(ui): 新增配置分区基类，统一行样式与滚动容器"
+```
+
+---
+
+### Task 8: 配置窗口 + 九个空 Pane
+
+**Files:**
+- Create: `src/UI/Settings/SettingsWindowController.swift`
+- Create: `src/UI/Settings/Panes/GeneralPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/CapsLayerPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/HotkeyLayerPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/MousePaneViewController.swift`
+- Create: `src/UI/Settings/Panes/WindowPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/LauncherPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/PasswordPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/GamepadPaneViewController.swift`
+- Create: `src/UI/Settings/Panes/AboutPaneViewController.swift`
+
+**为什么与 Task 7 分开**：`SettingsWindowController.makeSidebarItems()` 直接引用 9 个具体 Pane 类，所以「窗口 + 9 个 Pane」必须一起提交才能编译通过。
+
+- [ ] **Step 1: 实现窗口控制器**
 
 创建 `src/UI/Settings/SettingsWindowController.swift`：
 
@@ -1196,30 +1915,34 @@ final class SettingsWindowController: NSWindowController {
 
     // MARK: - 侧边栏条目
 
+    /// 9 个分区。顺序即侧边栏显示顺序。
+    ///
+    /// id 必须与 `FeatureID` 常量一致——配置窗口靠它读写对应功能的配置。
+    /// general 和 about 不是 Feature（没有配置项），用固定 id。
     private static func makeSidebarItems() -> [SidebarItem] {
         [
             SidebarItem(id: "general", title: "通用", icon: "gearshape") {
                 GeneralPaneViewController()
             },
-            SidebarItem(id: "capsLayer", title: "Caps 键层", icon: "capslock") {
+            SidebarItem(id: FeatureID.capsLayer, title: "Caps 键层", icon: "capslock") {
                 CapsLayerPaneViewController()
             },
-            SidebarItem(id: "hotkeyLayer", title: "全局快捷键", icon: "command") {
+            SidebarItem(id: FeatureID.hotkeyLayer, title: "全局快捷键", icon: "command") {
                 HotkeyLayerPaneViewController()
             },
-            SidebarItem(id: "mouse", title: "鼠标", icon: "computermouse") {
+            SidebarItem(id: FeatureID.mouseLayer, title: "鼠标", icon: "computermouse") {
                 MousePaneViewController()
             },
-            SidebarItem(id: "window", title: "窗口", icon: "macwindow") {
+            SidebarItem(id: FeatureID.switcher, title: "窗口", icon: "macwindow") {
                 WindowPaneViewController()
             },
-            SidebarItem(id: "launcher", title: "启动器", icon: "magnifyingglass") {
+            SidebarItem(id: FeatureID.launcher, title: "启动器", icon: "magnifyingglass") {
                 LauncherPaneViewController()
             },
-            SidebarItem(id: "password", title: "密码管理器", icon: "lock") {
+            SidebarItem(id: FeatureID.passwordVault, title: "密码管理器", icon: "lock") {
                 PasswordPaneViewController()
             },
-            SidebarItem(id: "gamepad", title: "手柄", icon: "gamecontroller") {
+            SidebarItem(id: FeatureID.gamepad, title: "手柄", icon: "gamecontroller") {
                 GamepadPaneViewController()
             },
             SidebarItem(id: "about", title: "关于", icon: "info.circle") {
@@ -1286,6 +2009,7 @@ final class SettingsWindowController: NSWindowController {
     private func showPane(at index: Int) {
         guard items.indices.contains(index) else { return }
 
+        // 切换分区时销毁旧 Pane，保证每次进入都是新状态
         currentPane?.view.removeFromSuperview()
         currentPane?.removeFromParent()
 
@@ -1351,33 +2075,9 @@ extension SettingsWindowController: NSTableViewDataSource, NSTableViewDelegate {
 }
 ```
 
-- [ ] **Step 3: 编译验证**
+- [ ] **Step 2: 实现九个空 Pane**
 
-Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -5`
-Expected: FAIL，因为 9 个 Pane 还没创建（`GeneralPaneViewController` 等未定义）
-
-- [ ] **Step 4: 提交（先不编译通过，等 Task 8 补全 Pane）**
-
-跳过提交，直接进 Task 8。
-
----
-
-### Task 8: 九个空 Pane
-
-**Files:**
-- Create: `src/UI/Settings/Panes/GeneralPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/CapsLayerPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/HotkeyLayerPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/MousePaneViewController.swift`
-- Create: `src/UI/Settings/Panes/WindowPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/LauncherPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/PasswordPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/GamepadPaneViewController.swift`
-- Create: `src/UI/Settings/Panes/AboutPaneViewController.swift`
-
-- [ ] **Step 1: 创建九个 Pane 文件**
-
-每个文件结构相同，只有类名、标题、图标、占位文案不同。以下是 `GeneralPaneViewController.swift`：
+每个文件结构相同，只有类名、标题、图标、占位文案不同。以下是 `src/UI/Settings/Panes/GeneralPaneViewController.swift` 的完整内容：
 
 ```swift
 import AppKit
@@ -1401,65 +2101,229 @@ final class GeneralPaneViewController: SettingsPaneViewController {
 }
 ```
 
-其余 8 个文件按同样模式创建，替换下表的值：
+**其余 8 个文件**：复制上面的文件，只替换 5 处（文件名、类名、`title:` 参数、`icon:` 参数、占位文案）。对照表：
 
-| 文件名 | 类名 | title 参数 | icon 参数 | 占位文案 |
+| 文件 | 类名 | title | icon | 占位文案 |
 |---|---|---|---|---|
-| `CapsLayerPaneViewController.swift` | `CapsLayerPaneViewController` | `"Caps 键层"` | `"capslock"` | `"Caps 层映射表将在第四阶段实现。"` |
-| `HotkeyLayerPaneViewController.swift` | `HotkeyLayerPaneViewController` | `"全局快捷键"` | `"command"` | `"全局快捷键映射表将在第四阶段实现。"` |
-| `MousePaneViewController.swift` | `MousePaneViewController` | `"鼠标"` | `"computermouse"` | `"鼠标侧键层配置将在第四阶段实现。"` |
+| `CapsLayerPaneViewController.swift` | `CapsLayerPaneViewController` | `"Caps 键层"` | `"capslock"` | `"Caps 层映射表将在第三阶段实现。"` |
+| `HotkeyLayerPaneViewController.swift` | `HotkeyLayerPaneViewController` | `"全局快捷键"` | `"command"` | `"全局快捷键映射表将在第三阶段实现。"` |
+| `MousePaneViewController.swift` | `MousePaneViewController` | `"鼠标"` | `"computermouse"` | `"鼠标侧键层配置将在第三阶段实现。"` |
 | `WindowPaneViewController.swift` | `WindowPaneViewController` | `"窗口"` | `"macwindow"` | `"⌘Tab 接管与窗口平铺配置将在第二阶段实现。"` |
 | `LauncherPaneViewController.swift` | `LauncherPaneViewController` | `"启动器"` | `"magnifyingglass"` | `"启动器设置将在第二阶段实现。"` |
 | `PasswordPaneViewController.swift` | `PasswordPaneViewController` | `"密码管理器"` | `"lock"` | `"密码管理器设置将在第二阶段实现。"` |
 | `GamepadPaneViewController.swift` | `GamepadPaneViewController` | `"手柄"` | `"gamecontroller"` | `"手柄 Home 键配置将在第五阶段实现。"` |
 | `AboutPaneViewController.swift` | `AboutPaneViewController` | `"关于"` | `"info.circle"` | `"版本信息与诊断工具将在第三阶段实现。"` |
 
-- [ ] **Step 2: 编译验证**
+> **注意**：`PasswordPaneViewController` 的类名不要叫 `PasswordManagerPaneViewController`——与现有的 `PasswordManagerWindow` 区分开。
+
+- [ ] **Step 3: 编译验证**
 
 Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -10`
 Expected: 输出 `✅ 构建成功:`
 
-- [ ] **Step 3: 手工验证窗口能打开**
+- [ ] **Step 4: 手工验证窗口能打开**
 
-临时在 `main.swift` 的 `applicationDidFinishLaunching` 里加一行（**验证后删除**）：
+**临时**在 `src/main.swift` 的 `applicationDidFinishLaunching` 末尾加（**验证后删除**）：
 
 ```swift
-DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-    let controller = SettingsWindowController()
-    controller.showWindow(nil)
-    NSApp.activate(ignoringOtherApps: true)
-}
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            let controller = SettingsWindowController()
+            controller.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
 ```
 
 Run: `./scripts/build.sh && open dist/build/TonyToy.app`
 Expected: 1 秒后弹出配置窗口，左侧 9 个分区，点击能切换右侧内容（显示占位文案）
 
-- [ ] **Step 4: 删除临时验证代码**
+> 如果打不开或布局异常，**不要**猜，把现象报告回来。
 
-删掉 Step 3 加的 `DispatchQueue.main.asyncAfter` 块。
+- [ ] **Step 5: 删除临时验证代码**
 
-- [ ] **Step 5: 提交**
+删掉 Step 4 加的 `DispatchQueue.main.asyncAfter` 块。
+
+- [ ] **Step 6: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && ./scripts/build.sh 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 7: 提交**
 
 ```bash
 git add src/UI/Settings/
-git commit -m "feat(ui): 新增配置窗口骨架与 9 个空分区"
+git commit -m "feat(ui): 新增配置窗口（侧边栏导航）与九个空分区"
 ```
 
 ---
 
-### Task 9: 接入托盘菜单
+### Task 9: 接入托盘菜单 + 配置只读模式
 
 **Files:**
-- Modify: `src/main.swift`
+- Modify: `src/Core/ConfigStore.swift`（只读模式）
+- Modify: `src/Core/FeatureRegistry.swift`（区分 futureVersion）
+- Modify: `src/main.swift`（「设置…」菜单 + 版本告警）
+- Modify: `tests/ConfigStoreTests.swift`（补只读测试）
 
-- [ ] **Step 1: 查看现有菜单构建位置**
+**本任务兑现最后一个审查遗留项**
 
-Run: `grep -n "buildMenu\|statusItem.menu\|NSMenu()" src/main.swift | head -10`
-Expected: 找到菜单构建方法（约在 `main.swift:160-220`）
+Task 6 审查发现：`startAll()` 用 `(try? store.load()) ?? .default` 吞掉了 `futureVersion`。今天不丢数据（`updateFeature` / `ConfigMigrator` 都会透传错误），但 Task 7+ 一旦出现「整份 save」路径，内存里的 `.default` 就会把新版本配置**整份覆盖写回**。
 
-- [ ] **Step 2: 添加「设置…」菜单项**
+版本检查只挡住了 `load`，没挡住 `save`。本任务补上只读模式。
 
-在 `src/main.swift` 的 AppDelegate 里新增属性：
+- [ ] **Step 1: 写失败的测试**
+
+在 `tests/ConfigStoreTests.swift` 的 `@main` 之前插入：
+
+```swift
+func testConfigStoreReadOnlyRejectsSave() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    let store = ConfigStore(fileURL: fileURL)
+
+    // 先写一份正常配置
+    var config = TonyToyConfig.default
+    config.general.theme = .dark
+    try! store.save(config)
+
+    // 进入只读
+    store.isReadOnly = true
+
+    var thrown: ConfigError?
+    do {
+        var mutated = config
+        mutated.general.theme = .light
+        try store.save(mutated)
+    } catch let error as ConfigError {
+        thrown = error
+    } catch {
+        assertTrue(false, "应抛 ConfigError，实际: \(error)")
+    }
+
+    assertTrue(thrown == .readOnly, "只读模式下 save 应抛 readOnly")
+
+    // 磁盘内容必须没变
+    let onDisk = try! ConfigStore(fileURL: fileURL).load()
+    assertTrue(onDisk.general.theme == .dark, "只读模式下不能改写磁盘")
+    print("testConfigStoreReadOnlyRejectsSave passed")
+}
+
+func testRegistryRecordsFutureVersionIssue() {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tonytoy-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("config.json")
+    // 未来版本的配置
+    let futureJSON = #"{"version":999,"general":{},"features":{}}"#
+    try! futureJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    final class SpyFeature: Feature {
+        let id = "spy"
+        let title = "探针"
+        let icon = "questionmark"
+        var settings: [SettingItem] { [] }
+        let defaultEnabled = true
+        private(set) var startCount = 0
+        func start() { startCount += 1 }
+        func stop() {}
+    }
+
+    let store = ConfigStore(fileURL: fileURL)
+    let registry = FeatureRegistry(store: store)
+    let spy = SpyFeature()
+    registry.register(spy)
+
+    registry.startAll()
+
+    // 版本过高：不能启动任何功能（跑了也是错的默认值）
+    assertTrue(spy.startCount == 0, "版本过高时不应启动任何功能")
+    assertTrue(
+        registry.loadIssue == .futureVersion(999),
+        "应记录 futureVersion，实际: \(String(describing: registry.loadIssue))")
+    assertTrue(store.isReadOnly, "版本过高时 store 应进入只读模式")
+    print("testRegistryRecordsFutureVersionIssue passed")
+}
+```
+
+在 `ConfigStoreTests.main()` 里追加两个调用。
+
+- [ ] **Step 2: 给 `ConfigStore` 加只读模式**
+
+在 `src/Core/ConfigStore.swift` 的 `ConfigError` 里加一个 case：
+
+```swift
+enum ConfigError: Error, Equatable {
+    /// 配置文件由更新版本的应用写过
+    case futureVersion(Int)
+    /// 配置处于只读模式（版本过高），拒绝写入以免覆盖新版本数据
+    case readOnly
+}
+```
+
+在 `ConfigStore` 里加属性：
+
+```swift
+    /// 只读模式。配置文件版本高于本应用时置为 true——
+    /// 此时任何 save 都会被拒绝，避免旧版本把新版本配置整份覆盖写回。
+    var isReadOnly = false
+```
+
+在 `save(_:)` 开头加：
+
+```swift
+    func save(_ config: TonyToyConfig) throws {
+        guard !isReadOnly else {
+            dbg("配置处于只读模式，拒绝写入")
+            throw ConfigError.readOnly
+        }
+        // ... 原有实现
+    }
+```
+
+- [ ] **Step 3: 给 `FeatureRegistry` 记录加载错误**
+
+在 `FeatureRegistry` 里加：
+
+```swift
+    /// 启动时加载配置遇到的错误（目前只有 futureVersion）。
+    /// 非 nil 时应用应显示告警，且不再写入配置。
+    private(set) var loadIssue: ConfigError?
+```
+
+把 `startAll()` 改成：
+
+```swift
+    func startAll() {
+        do {
+            let config = try store.load()
+            applyAll(normalizedConfig(config))
+        } catch let error as ConfigError {
+            // 版本高于本应用：不能跑默认值（那是错的配置），
+            // 也不能写入（会覆盖新版本数据）。记录问题，由界面提示用户。
+            loadIssue = error
+            store.isReadOnly = true
+            dbg("配置加载失败，功能未启动: \(error)")
+        } catch {
+            // 其它错误不该出现（load 内部已兜底），保底跑默认值
+            dbg("配置加载意外失败，使用默认值: \(error)")
+            applyAll(normalizedConfig(.default))
+        }
+
+        // 配置外部变更时热更新
+        store.onChange = { [weak self] newConfig in
+            self?.applyAll(newConfig)
+        }
+    }
+```
+
+- [ ] **Step 4: 接入托盘菜单**
+
+在 `src/main.swift` 的 AppDelegate 里新增属性（放在其他 controller 附近）：
 
 ```swift
     private lazy var settingsWindowController = SettingsWindowController()
@@ -1483,21 +2347,67 @@ Expected: 找到菜单构建方法（约在 `main.swift:160-220`）
     }
 ```
 
-- [ ] **Step 3: 编译验证**
+- [ ] **Step 5: 版本告警**
 
-Run: `./scripts/build.sh 2>&1 | grep -E "✅|error" | head -5`
-Expected: 输出 `✅ 构建成功:`
+在 `applicationDidFinishLaunching` 里，`FeatureRegistry.shared.startAll()` **之后**加：
 
-- [ ] **Step 4: 手工验证**
+```swift
+        // 配置由更新版本写过：功能全部未启动，且不写入配置。
+        // 静默跑默认值会让用户以为「设置丢了」，必须明确告知。
+        if let issue = FeatureRegistry.shared.loadIssue,
+            case .futureVersion(let version) = issue
+        {
+            let alert = NSAlert()
+            alert.messageText = "配置由更新版本写入"
+            alert.informativeText = """
+                config.json 的版本（\(version)）高于当前应用支持的版本（\(TonyToyConfig.currentVersion)）。
 
-Run: 安装后点托盘菜单 → 「设置…」（或按 `⌘,`）
-Expected: 弹出配置窗口，9 个分区可切换
+                为避免覆盖高版本配置，本次没有加载任何功能，也不会写入配置文件。
+                请升级 TonyToy，或备份后手动处理 ~/.config/tony-toy/config.json。
+                """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "打开配置文件夹")
+            alert.addButton(withTitle: "知道了")
 
-- [ ] **Step 5: 提交**
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(ConfigStore.defaultURL.deletingLastPathComponent())
+            }
+        }
+```
+
+> **注意**：`runModal()` 会阻塞主线程直到用户点击。启动时弹一次可以接受（这是严重错误状态）；如果你想非阻塞，改成 `beginSheetModal` 或通知。**说明你的选择。**
+
+- [ ] **Step 6: 全量验证**
+
+Run: `just test 2>&1 | tail -3 && ./scripts/build.sh 2>&1 | grep -E "✅|error" | head -3`
+Expected: `all tests passed` + `✅ 构建成功:`
+
+- [ ] **Step 7: 手工验证**
+
+Run:
+```bash
+./scripts/build.sh
+osascript -e 'quit app "TonyToy"'; sleep 2
+sudo rm -rf /Applications/TonyToy.app
+sudo ditto dist/build/TonyToy.app /Applications/TonyToy.app
+sudo chown -R "$(id -u):$(id -g)" /Applications/TonyToy.app
+open /Applications/TonyToy.app
+```
+
+- [ ] 点托盘菜单 → 「设置…」（或按 `⌘,`）能打开配置窗口
+- [ ] 9 个分区都能切换
+- [ ] 现有功能（`⌥D` 启动器、`⌘Tab` 切换器、Caps 层、密码管理器）**行为与重构前一致**
+
+- [ ] **Step 8: 变异测试**
+
+- 删掉 `save` 里的 `guard !isReadOnly` → `testConfigStoreReadOnlyRejectsSave` 应失败
+- `startAll` 的 `catch let error as ConfigError` 改回 `?? .default` → `testRegistryRecordsFutureVersionIssue` 应失败
+
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/main.swift
-git commit -m "feat: 托盘菜单新增「设置…」入口"
+git add src/Core/ConfigStore.swift src/Core/FeatureRegistry.swift src/main.swift tests/ConfigStoreTests.swift
+git commit -m "feat: 托盘菜单新增设置入口，配置版本过高时进入只读并告警"
 ```
 
 ---

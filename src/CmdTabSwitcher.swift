@@ -3,9 +3,15 @@ import Cocoa
 
 /// 接管 ⌘Tab：按下时呼出启动器，按住 ⌘ 期间循环选择，松开 ⌘ 执行选中项
 final class CmdTabSwitcher {
-    private var eventTap: CFMachPort?
     private var isActive = false
-    private var retryCount = 0
+
+    /// 创建/重试/禁用恢复/录制放行都由 `EventTap` 统一处理
+    private lazy var tap = EventTap(
+        name: "cmdTabSwitcher",
+        events: .make([.keyDown, .flagsChanged])
+    ) { [weak self] type, event in
+        self?.handleEvent(type: type, event: event)
+    }
 
     private let tabKeyCode: Int64 = 48
     private let escKeyCode: Int64 = 53
@@ -22,51 +28,15 @@ final class CmdTabSwitcher {
     private let kKeyCode: Int64 = 40
 
     func start() {
-        stop()
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { _, type, event, refcon in
-                let switcher = Unmanaged<CmdTabSwitcher>.fromOpaque(refcon!).takeUnretainedValue()
-                return switcher.handleEvent(type: type, event: event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            retryCount += 1
-            dbg("cmdtap failed retry=\(retryCount)")
-            if retryCount <= 10 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.start()
-                }
-            }
-            return
-        }
-        retryCount = 0
-        dbg("cmdtap created")
-        eventTap = tap
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        tap.start()
     }
 
     func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
+        tap.stop()
         isActive = false
     }
 
-    private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
+    private func handleEvent(type: CGEventType, event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
@@ -86,13 +56,23 @@ final class CmdTabSwitcher {
             return nil
         }
 
+        // 兜底：⌘ 已经松开但 isActive 还挂着。
+        //
+        // 事件流中断（切到别的应用、tap 被系统临时禁用）会丢 flagsChanged，
+        // isActive 永远停在 true，之后每次按 Esc / 方向键都会被上面的
+        // 导航分支吞掉——这是「快捷键时而失灵」的根源。
+        if isActive, type == .keyDown, !flags.contains(.maskCommand) {
+            isActive = false
+            DispatchQueue.main.async { SwitcherController.shared.cancel() }
+        }
+
         // 松开 ⌘：执行选中项
         if type == .flagsChanged, isActive, !flags.contains(.maskCommand) {
             isActive = false
             DispatchQueue.main.async {
                 SwitcherController.shared.commit()
             }
-            return Unmanaged.passUnretained(event)
+            return event
         }
 
         // 按住 ⌘ 期间：方向键或 E/D/S/F 导航，全部吞掉避免提示音
@@ -128,6 +108,6 @@ final class CmdTabSwitcher {
             }
         }
 
-        return Unmanaged.passUnretained(event)
+        return event
     }
 }

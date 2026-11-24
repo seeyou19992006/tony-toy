@@ -14,8 +14,22 @@ if [ ! -x "$REPO_ROOT/scripts/build.sh" ] || [ ! -x "$REPO_ROOT/scripts/package.
   exit 1
 fi
 
-swiftc "$REPO_ROOT/src/MenuStateStore.swift" "$REPO_ROOT/tests/MenuStateStoreTests.swift" -o /tmp/menu-state-tests
-/tmp/menu-state-tests
+swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
+       "$REPO_ROOT/tests/JSONValueTests.swift" \
+       -o /tmp/jsonvalue-tests
+/tmp/jsonvalue-tests
+
+swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
+       "$REPO_ROOT/src/Core/TonyToyConfig.swift" \
+       "$REPO_ROOT/src/Core/ConfigStore.swift" \
+       "$REPO_ROOT/src/Core/ConfigMigrator.swift" \
+       "$REPO_ROOT/src/Core/HotkeyKeySpec.swift" \
+       "$REPO_ROOT/src/Core/Feature.swift" \
+       "$REPO_ROOT/src/Core/FeatureRegistry.swift" \
+       "$REPO_ROOT/src/DebugLog.swift" \
+       "$REPO_ROOT/tests/ConfigStoreTests.swift" \
+       -o /tmp/config-tests
+/tmp/config-tests
 
 swiftc "$REPO_ROOT/src/PasswordEntry.swift" \
        "$REPO_ROOT/src/VaultCryptoService.swift" \
@@ -24,6 +38,24 @@ swiftc "$REPO_ROOT/src/PasswordEntry.swift" \
        "$REPO_ROOT/tests/VaultServiceTests.swift" \
        -framework CryptoKit -framework Foundation -o /tmp/vault-tests
 /tmp/vault-tests
+
+swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
+       "$REPO_ROOT/src/Core/TonyToyConfig.swift" \
+       "$REPO_ROOT/src/Core/ConfigStore.swift" \
+       "$REPO_ROOT/src/Core/ConfigMigrator.swift" \
+       "$REPO_ROOT/src/Core/HotkeyKeySpec.swift" \
+       "$REPO_ROOT/src/Core/Feature.swift" \
+       "$REPO_ROOT/src/DebugLog.swift" \
+       "$REPO_ROOT/src/KeyConfigSupport.swift" \
+       "$REPO_ROOT/src/InputAliasRegistry.swift" \
+       "$REPO_ROOT/src/AppAction.swift" \
+       "$REPO_ROOT/src/ScreenCoordinateConverter.swift" \
+       "$REPO_ROOT/src/WindowIdentityResolver.swift" \
+       "$REPO_ROOT/src/WindowMovementPlanner.swift" \
+       "$REPO_ROOT/src/AppActionExecutor.swift" \
+       "$REPO_ROOT/tests/WindowMovementTests.swift" \
+       -framework Cocoa -framework Carbon -framework ApplicationServices -o /tmp/window-movement-tests
+/tmp/window-movement-tests
 
 bash "$REPO_ROOT/tests/test_developer_settings.sh"
 bash "$REPO_ROOT/tests/test_package_signing_keychain.sh"

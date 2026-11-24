@@ -2,9 +2,16 @@ import Foundation
 import Cocoa
 
 final class CapsMapperController {
-    private var eventTap: CFMachPort?
     private var isLayerActive = false
-    private var retryCount = 0
+
+    /// 创建/重试/禁用恢复/录制放行都由 `EventTap` 统一处理
+    private lazy var tap = EventTap(
+        name: "capsLayer",
+        events: .make([.keyDown, .keyUp, .flagsChanged])
+    ) { [weak self] type, event in
+        self?.handleEvent(type: type, event: event)
+    }
+
     private let capsSrc: Int64 = 0x700000039
     private let f19Dst: Int64 = 0x70000006E
     private let configStore = CapsMappingConfigStore()
@@ -13,6 +20,21 @@ final class CapsMapperController {
 
     func setEnabled(_ enabled: Bool) {
         if enabled { start() } else { stop() }
+    }
+
+    /// 重新加载映射表（配置窗口改了映射后调用）。
+    ///
+    /// 不重建 event tap——`setEnabled(true)` 会先 stop() 再 start()，
+    /// 短暂丢事件，而且 `start()` 里会重复跑一次 `hidutil property --set`。
+    func reload() {
+        guard tap.isRunning else { return }
+        do {
+            mappings = try configStore.loadMappings()
+        } catch {
+            fputs("Failed to reload caps mappings: \(error)\n", stderr)
+            mappings = [:]
+        }
+        applyMapping(remap: true)
     }
 
     private func start() {
@@ -24,33 +46,11 @@ final class CapsMapperController {
             mappings = [:]
         }
         applyMapping(remap: true)
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(eventMask), callback: { _, type, event, refcon in
-            let controller = Unmanaged<CapsMapperController>.fromOpaque(refcon!).takeUnretainedValue()
-            return controller.handleEvent(type: type, event: event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            // 辅助功能权限可能还没生效，稍后重试，否则 Caps 层会永久失效
-            retryCount += 1
-            if retryCount <= 10 {
-                fputs("CapsMapper tapCreate failed, retry \(retryCount)\n", stderr)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.start()
-                }
-            }
-            return
-        }
-        retryCount = 0
-        dbg("caps tap created")
-        eventTap = tap
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        tap.start()
     }
 
     private func stop() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
+        tap.stop()
         isLayerActive = false
         mappings = [:]
         applyMapping(remap: false)
@@ -66,18 +66,8 @@ final class CapsMapperController {
         _ = setUserKeyMappings(mappings)
     }
 
-    private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
+    private func handleEvent(type: CGEventType, event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        if keyCode == 53 {
-            dbg("caps sees esc: layerActive=\(isLayerActive)")
-        }
 
         if keyCode == 80 { // F19
             if type == .keyDown { isLayerActive = true; dbg("F19 down") }
@@ -91,7 +81,7 @@ final class CapsMapperController {
                 return nil
             }
         }
-        return Unmanaged.passUnretained(event)
+        return event
     }
 
     private func setUserKeyMappings(_ mappings: [[String: Any]]) -> Bool {

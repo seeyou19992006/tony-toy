@@ -5,6 +5,13 @@ import CoreGraphics
 
 /// 把选中的应用带到前台；有窗口则抬升，没窗口则发 reopen 事件让它自己开窗
 final class Activator {
+    /// 「切换后把鼠标移到目标窗口中心」开关。
+    ///
+    /// 由 `SwitcherController` 在 commit 时设置——它才是配置的持有者。
+    /// 之前读 `MenuStateStore.isMouseFollowEnabled`（UserDefaults），
+    /// 配置迁到 config.json 后就断了。
+    static var mouseFollowEnabled = false
+
     func activate(_ entry: AppEntry) {
         guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: entry.bundleID).first else {
             // 进程都不存在：先启动，启动后同样可能没有窗口（Finder 被退出后就是如此）
@@ -50,7 +57,7 @@ final class Activator {
 
     /// 把鼠标移到该应用最前面窗口的正中心
     private func moveMouseToWindowCenter(of pid: pid_t, delay: TimeInterval) {
-        guard MenuStateStore.isMouseFollowEnabled else { return }
+        guard Activator.mouseFollowEnabled else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],

@@ -38,7 +38,9 @@ final class AppActionExecutor {
     private var currentFrontmost: TrackedApplication?
     private var previousFrontmost: TrackedApplication?
     private var windowRestoreCache: [WindowRestoreKey: [String: CGRect]] = [:]
-    private var windowLastAutoFrames: [WindowRestoreKey: [String: CGRect]] = [:]
+    private var windowLastAutoFrames: [WindowRestoreKey: [String: [CGRect]]] = [:]
+    private var pendingWindowFrames: [WindowRestoreKey: (displayID: String, frame: CGRect, generation: UInt64)] = [:]
+    private var windowMoveGeneration: UInt64 = 0
 
     init(notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         if let app = NSWorkspace.shared.frontmostApplication,
@@ -191,7 +193,11 @@ final class AppActionExecutor {
     {
         let expandsOnCurrentDisplay =
             targetFrame.width > currentFrame.width || targetFrame.height > currentFrame.height
-        return expandsOnCurrentDisplay ? [.position, .size, .position] : [.size, .position]
+        // 缩小时先改大小再移动，但跨屏后系统或应用（DPI/缩放切换）可能重设尺寸，
+        // 需要在到达目标屏后再补一次 size + position 兜底。
+        return expandsOnCurrentDisplay
+            ? [.position, .size, .position]
+            : [.size, .position, .size, .position]
     }
 
     static func windowFramePositionStepFrame(currentFrame: CGRect, targetFrame: CGRect) -> CGRect {
@@ -200,7 +206,14 @@ final class AppActionExecutor {
         guard expandsOnCurrentDisplay else {
             return targetFrame
         }
-        return CGRect(origin: targetFrame.origin, size: currentFrame.size)
+        // AX 坐标以左上角为原点并向下扩展；若用 AppKit 左下角对齐，放大高度时会顶到屏幕底边被截断。
+        // 这里保持顶部（AppKit maxY）对齐目标顶部，让后续 size 向下安全展开。
+        return CGRect(
+            x: targetFrame.minX,
+            y: targetFrame.maxY - currentFrame.height,
+            width: currentFrame.width,
+            height: currentFrame.height
+        )
     }
 
     func dispatchShortcut(
@@ -341,21 +354,38 @@ final class AppActionExecutor {
             return
         }
 
+        let sourceLastAutoFrames = windowLastAutoFrames[focusedWindow.restoreKey]?[sourceDisplay.id] ?? []
+        let shouldUseCachedTargetFrame = WindowMovementPlanner.shouldUseRestoredFrame(
+            currentFrame: focusedWindow.frame,
+            lastAutoFramesOnSourceDisplay: sourceLastAutoFrames
+        )
+        // 若上一跳在源屏的 50ms 补设还没来得及执行就被快速连按打断，只要窗口没被手动改过，
+        // 就沿用上一跳的预期目标帧（而非尚未放大到位的物理帧）来计算下一跳。
+        let pendingSourceFrame: CGRect? = {
+            guard shouldUseCachedTargetFrame,
+                  let pending = pendingWindowFrames[focusedWindow.restoreKey],
+                  pending.displayID == sourceDisplay.id else {
+                return nil
+            }
+            return pending.frame
+        }()
+        pendingWindowFrames.removeValue(forKey: focusedWindow.restoreKey)
+        let effectiveSourceFrame = pendingSourceFrame ?? focusedWindow.frame
+
         let projectedFrame = WindowMovementPlanner.project(
-            frame: focusedWindow.frame, from: sourceDisplay, to: targetDisplay)
+            frame: effectiveSourceFrame, from: sourceDisplay, to: targetDisplay)
         let shouldWriteRestoreCache = WindowMovementPlanner.shouldCacheForReturn(
-            originalFrame: focusedWindow.frame, projectedFrame: projectedFrame)
+            originalFrame: effectiveSourceFrame,
+            projectedFrame: projectedFrame,
+            from: sourceDisplay,
+            to: targetDisplay
+        )
         if shouldWriteRestoreCache {
             var restoreFrames = windowRestoreCache[focusedWindow.restoreKey] ?? [:]
-            restoreFrames[sourceDisplay.id] = focusedWindow.frame
+            restoreFrames[sourceDisplay.id] = effectiveSourceFrame
             windowRestoreCache[focusedWindow.restoreKey] = restoreFrames
         }
 
-        let sourceLastAutoFrame = windowLastAutoFrames[focusedWindow.restoreKey]?[sourceDisplay.id]
-        let shouldUseCachedTargetFrame = WindowMovementPlanner.shouldUseRestoredFrame(
-            currentFrame: focusedWindow.frame,
-            lastAutoFrameOnSourceDisplay: sourceLastAutoFrame
-        )
         let (cachedTargetFrame, updatedCache) = WindowMovementPlanner.consumeRestoredFrame(
             for: focusedWindow.restoreKey,
             targetDisplayID: targetDisplay.id,
@@ -364,50 +394,101 @@ final class AppActionExecutor {
         windowRestoreCache = updatedCache
         let effectiveCachedTargetFrame = shouldUseCachedTargetFrame ? cachedTargetFrame : nil
         let targetFrame = WindowMovementPlanner.resolveTargetFrame(
-            frame: focusedWindow.frame,
+            frame: effectiveSourceFrame,
             from: sourceDisplay,
             to: targetDisplay,
             cachedTargetFrame: effectiveCachedTargetFrame
         )
-        fputs(
-            Self.windowMoveLogLine(
-                direction: direction,
-                sourceDisplayID: sourceDisplay.id,
-                targetDisplayID: targetDisplay.id,
-                sourceVisibleFrame: sourceDisplay.visibleFrame,
-                targetVisibleFrame: targetDisplay.visibleFrame,
-                originalFrame: focusedWindow.frame,
-                projectedFrame: projectedFrame,
-                cachedTargetFrame: effectiveCachedTargetFrame,
-                resolvedTargetFrame: targetFrame,
-                wroteRestoreCache: shouldWriteRestoreCache
-            ),
-            stderr
+        let planLog = Self.windowMoveLogLine(
+            direction: direction,
+            sourceDisplayID: sourceDisplay.id,
+            targetDisplayID: targetDisplay.id,
+            sourceVisibleFrame: sourceDisplay.visibleFrame,
+            targetVisibleFrame: targetDisplay.visibleFrame,
+            originalFrame: focusedWindow.frame,
+            projectedFrame: projectedFrame,
+            cachedTargetFrame: effectiveCachedTargetFrame,
+            resolvedTargetFrame: targetFrame,
+            wroteRestoreCache: shouldWriteRestoreCache
         )
+        fputs(planLog, stderr)
+        dbg(planLog.trimmingCharacters(in: .newlines))
+
+        windowMoveGeneration &+= 1
+        let moveGeneration = windowMoveGeneration
 
         if !setWindowFrame(focusedWindow.element, frame: targetFrame) {
             fputs(
                 "Window move failed: AX rejected frame update to \(NSStringFromRect(targetFrame)).\n",
                 stderr)
+            dbg("Window move failed: AX rejected frame update to \(NSStringFromRect(targetFrame))")
             return
         }
         let appliedFrame = windowFrame(of: focusedWindow.element)
         var autoFrames = windowLastAutoFrames[focusedWindow.restoreKey] ?? [:]
-        autoFrames[targetDisplay.id] = appliedFrame ?? targetFrame
+        var recordedFrames = [targetFrame]
+        if let appliedFrame {
+            recordedFrames.append(appliedFrame)
+        }
+        autoFrames[targetDisplay.id] = recordedFrames
         windowLastAutoFrames[focusedWindow.restoreKey] = autoFrames
-        fputs(
-            Self.windowMoveResultLogLine(requestedFrame: targetFrame, appliedFrame: appliedFrame),
-            stderr)
+        let resultLog = Self.windowMoveResultLogLine(
+            requestedFrame: targetFrame, appliedFrame: appliedFrame)
+        fputs(resultLog, stderr)
+        dbg(resultLog.trimmingCharacters(in: .newlines))
+
+        // 跨屏放大时，部分应用（如 Chrome）在刚切换屏幕的瞬间仍按旧屏幕约束高度；
+        // 若首次设帧后尺寸/位置尚未到位，50ms 后补设一次确保在目标屏生效。
+        let needsFollowUp = appliedFrame.map {
+            abs($0.minX - targetFrame.minX) > 2 ||
+                abs($0.minY - targetFrame.minY) > 2 ||
+                abs($0.width - targetFrame.width) > 2 ||
+                abs($0.height - targetFrame.height) > 2
+        } ?? false
+        if needsFollowUp {
+            let element = focusedWindow.element
+            let restoreKey = focusedWindow.restoreKey
+            let targetDisplayID = targetDisplay.id
+            pendingWindowFrames[restoreKey] = (
+                displayID: targetDisplayID, frame: targetFrame, generation: moveGeneration
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self, self.windowMoveGeneration == moveGeneration else { return }
+                if self.pendingWindowFrames[restoreKey]?.generation == moveGeneration {
+                    self.pendingWindowFrames.removeValue(forKey: restoreKey)
+                }
+                _ = self.setWindowFrame(element, frame: targetFrame)
+                let settledFrame = self.windowFrame(of: element)
+                var updatedAutoFrames = self.windowLastAutoFrames[restoreKey] ?? [:]
+                var frames = [targetFrame]
+                if let settledFrame {
+                    frames.append(settledFrame)
+                }
+                updatedAutoFrames[targetDisplayID] = frames
+                self.windowLastAutoFrames[restoreKey] = updatedAutoFrames
+                dbg("Window move follow-up: requested=\(NSStringFromRect(targetFrame)) applied=\(settledFrame.map(NSStringFromRect) ?? "<unavailable>")")
+            }
+        }
     }
 
     private func maximizeFrontmostWindow() {
         guard ensureAccessibilityTrusted(for: "resize windows") else {
             return
         }
-        guard let windowElement = focusedWindowElement(),
-            let visibleFrame = NSScreen.main?.visibleFrame
-        else {
-            fputs("Window maximize skipped: focused window or target screen unavailable.\n", stderr)
+        guard let windowElement = focusedWindowElement() else {
+            fputs("Window maximize skipped: focused window unavailable.\n", stderr)
+            return
+        }
+        let targetVisibleFrame: CGRect?
+        if let currentFrame = windowFrame(of: windowElement),
+           let display = WindowMovementPlanner.displayContaining(
+               frame: currentFrame, displays: currentDisplayLayouts()) {
+            targetVisibleFrame = display.visibleFrame
+        } else {
+            targetVisibleFrame = NSScreen.main?.visibleFrame
+        }
+        guard let visibleFrame = targetVisibleFrame else {
+            fputs("Window maximize skipped: target screen unavailable.\n", stderr)
             return
         }
 
@@ -570,6 +651,7 @@ final class AppActionExecutor {
             windowElement, kAXPositionAttribute as CFString, newPosition)
         if error != .success {
             fputs("AX update failed: position error \(error.rawValue).\n", stderr)
+            dbg("AX update failed: position error \(error.rawValue) point=\(NSStringFromPoint(point))")
             return false
         }
         return true
@@ -586,6 +668,7 @@ final class AppActionExecutor {
             windowElement, kAXSizeAttribute as CFString, newSize)
         if error != .success {
             fputs("AX update failed: size error \(error.rawValue).\n", stderr)
+            dbg("AX update failed: size error \(error.rawValue) size=\(NSStringFromSize(size))")
             return false
         }
         return true
@@ -597,6 +680,34 @@ final class AppActionExecutor {
             fputs("AX update failed: unable to determine screen coordinate converter.\n", stderr)
             return false
         }
+
+        // Chrome/Electron 开启 AXEnhancedUserInterface 时会对 AXPosition/AXSize 做动画或丢弃跨屏尺寸更新，
+        // 设帧前临时关闭、结束后恢复，确保尺寸与位置同步生效。
+        var pid: pid_t = 0
+        let appElement: AXUIElement? =
+            AXUIElementGetPid(windowElement, &pid) == .success
+            ? AXUIElementCreateApplication(pid)
+            : nil
+        let enhancedAttr = "AXEnhancedUserInterface" as CFString
+        var enhancedRef: CFTypeRef?
+        let hadEnhancedUI: Bool = {
+            guard let appElement,
+                  AXUIElementCopyAttributeValue(appElement, enhancedAttr, &enhancedRef) == .success,
+                  let enabled = enhancedRef as? Bool
+            else {
+                return false
+            }
+            return enabled
+        }()
+        if hadEnhancedUI, let appElement {
+            AXUIElementSetAttributeValue(appElement, enhancedAttr, kCFBooleanFalse)
+        }
+        defer {
+            if hadEnhancedUI, let appElement {
+                AXUIElementSetAttributeValue(appElement, enhancedAttr, kCFBooleanTrue)
+            }
+        }
+
         let currentFrame = windowFrame(of: windowElement) ?? frame
         let updatePlan = Self.windowFrameUpdatePlan(currentFrame: currentFrame, targetFrame: frame)
         let positionStepFrame = Self.windowFramePositionStepFrame(

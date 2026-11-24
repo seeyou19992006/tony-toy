@@ -26,7 +26,7 @@ final class SwitcherTile: NSView {
 
         nameLabel.stringValue = item.displayTitle
         nameLabel.font = .systemFont(ofSize: 11.5)
-        nameLabel.textColor = .white
+        nameLabel.textColor = .labelColor
         nameLabel.alignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
@@ -52,7 +52,8 @@ final class SwitcherTile: NSView {
         highlight.layer?.backgroundColor = isSelected
             ? NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1).cgColor
             : NSColor.clear.cgColor
-        nameLabel.textColor = NSColor.white.withAlphaComponent(isSelected ? 1 : 0.85)
+        // 选中格子是深青色高亮，文字转白保证对比度
+        nameLabel.textColor = isSelected ? .white : .secondaryLabelColor
     }
 
 }
@@ -62,7 +63,7 @@ final class SwitcherTile: NSView {
 final class SwitcherWindow: NSPanel {
     private let background = NSVisualEffectView()
     private let container = NSView()
-    private let tintView = NSView()
+    private let tintView = AppearanceAwareTintView()
     private let headerLabel = NSTextField(labelWithString: "")
     private let separator = NSBox()
     private var tiles: [SwitcherTile] = []
@@ -89,7 +90,8 @@ final class SwitcherWindow: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         hidesOnDeactivate = false
-        appearance = NSAppearance(named: .darkAqua)
+        // 不要硬编码 appearance——那会覆盖 `NSApp.appearance`，
+        // 让设置里的「主题」对启动器/切换器失效。留空即继承应用外观。
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
 
@@ -108,11 +110,11 @@ final class SwitcherWindow: NSPanel {
         container.addSubview(background)
 
         tintView.wantsLayer = true
-        tintView.layer?.backgroundColor = NSColor(srgbRed: 0.07, green: 0.08, blue: 0.09, alpha: 0.88).cgColor
+        // 颜色由 `AppearanceAwareTintView.updateLayer` 按当前外观算
         background.addSubview(tintView)
 
         headerLabel.font = .systemFont(ofSize: 15, weight: .medium)
-        headerLabel.textColor = .white
+        headerLabel.textColor = .labelColor
         headerLabel.lineBreakMode = .byTruncatingMiddle
         headerLabel.alignment = .center
         background.addSubview(headerLabel)
