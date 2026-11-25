@@ -80,8 +80,8 @@ enum WindowedApps {
         return entries
     }
 
-    /// 识别在其他 Space 处于原生全屏（且 AX 可能取不到窗口）的进程
-    static func pidsWithFullscreenOtherSpaceWindows() -> Set<pid_t> {
+    /// 识别当前任意显示器上屏中（`isOnscreen == true`）或在其他 Space 处于原生全屏的进程
+    static func pidsWithVisibleOrFullscreenWindows() -> Set<pid_t> {
         let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
                                               kCGNullWindowID) as? [[String: Any]] ?? []
         let cid = CGSMainConnectionID()
@@ -91,9 +91,15 @@ enum WindowedApps {
 
         for info in list {
             guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
-                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  ((info[kCGWindowIsOnscreen as String] as? Bool) ?? false) == false,
-                  let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
+                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { continue }
+
+            let isOnscreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
+            if isOnscreen {
+                result.insert(pid)
+                continue
+            }
+
+            guard let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
                   let spaces = CGSCopySpacesForWindows(
                       cid, allSpacesMask, [windowNumber] as CFArray) as? [UInt64],
                   !Set(spaces).subtracting(activeSpaces).isEmpty,

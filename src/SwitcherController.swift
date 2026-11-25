@@ -318,7 +318,7 @@ final class SwitcherController {
 
         var items: [SwitcherItem] = []
 
-        let fullscreenPIDs = WindowedApps.pidsWithFullscreenOtherSpaceWindows()
+        let confirmedWindowPIDs = WindowedApps.pidsWithVisibleOrFullscreenWindows()
         let selfPID = ProcessInfo.processInfo.processIdentifier
         for entry in windowed + background {
             guard let app = NSRunningApplication
@@ -349,9 +349,8 @@ final class SwitcherController {
             let windows = WindowEnumerator.standardWindows(of: app.processIdentifier)
 
             if windows.isEmpty {
-                // 原生全屏窗口在其他 Space 时 AX 可能返回空；仅当确认是全屏 Space 窗口才算有窗口，
-                // 避免把已关闭到托盘但残留 Space 标记的 Electron 窗口（如 Clash Party）误判为亮色。
-                let hasOtherSpaceWindow = fullscreenPIDs.contains(app.processIdentifier)
+                // 若该进程在任意显示器上屏中，或在其他 Space 处于原生全屏，即使 AX 没取到窗口也保持亮色。
+                let hasOtherSpaceWindow = confirmedWindowPIDs.contains(app.processIdentifier)
                 if hasOtherSpaceWindow {
                     items.append(SwitcherItem(entry: entry, window: nil,
                                               windowTitle: nil, hasWindow: true))
