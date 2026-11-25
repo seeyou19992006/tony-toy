@@ -64,10 +64,14 @@ final class SwitcherController {
     /// 是否显示无窗口应用（配置项，默认开启）。
     var showWindowlessApps = true
 
+    /// 磁贴标题显示模式（配置项，默认全部显示）。
+    var titleMode: SwitcherTitleMode = .all
+
     /// 应用配置（配置窗口改了设置后调用，下次弹出生效）
-    func configure(mouseFollow: Bool, showWindowlessApps: Bool) {
+    func configure(mouseFollow: Bool, showWindowlessApps: Bool, titleMode: SwitcherTitleMode = .all) {
         self.mouseFollow = mouseFollow
         self.showWindowlessApps = showWindowlessApps
+        self.titleMode = titleMode
     }
 
     private let activator = Activator()
@@ -143,7 +147,7 @@ final class SwitcherController {
         windows.forEach { $0.hide() }
         windows = NSScreen.screens.map { SwitcherWindow(screen: $0) }
         for window in windows {
-            window.present(items: items, rows: rows, cols: cols, selected: selected)
+            window.present(items: items, rows: rows, cols: cols, selected: selected, titleMode: titleMode)
         }
 
         NSApp.activate(ignoringOtherApps: true)
@@ -330,7 +334,7 @@ final class SwitcherController {
         (rows, cols) = Self.grid(for: items.count)
         selected = min(selected, items.count - 1)
         for window in windows {
-            window.present(items: items, rows: rows, cols: cols, selected: selected)
+            window.present(items: items, rows: rows, cols: cols, selected: selected, titleMode: titleMode)
         }
     }
 

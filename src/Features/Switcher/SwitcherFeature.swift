@@ -22,6 +22,15 @@ final class SwitcherFeature: Feature {
             .toggle(key: "enabled", title: "启用 ⌘Tab 接管", defaultValue: defaultEnabled),
             .toggle(key: "mouseFollow", title: "切换时鼠标移到窗口中心", defaultValue: false),
             .toggle(key: "showWindowlessApps", title: "显示无窗口应用", defaultValue: true),
+            .picker(
+                key: "titleMode",
+                title: "磁贴标题",
+                options: [
+                    (value: "all", label: "显示全部"),
+                    (value: "selectedOnly", label: "仅选中项")
+                ],
+                defaultValue: "all"
+            ),
         ]
     }
 
@@ -32,6 +41,7 @@ final class SwitcherFeature: Feature {
     /// 最近一次应用的展示配置。
     private(set) var mouseFollow = false
     private(set) var showWindowlessApps = true
+    private(set) var titleMode: SwitcherTitleMode = .all
 
     func start() { switcher.start() }
 
@@ -49,9 +59,16 @@ final class SwitcherFeature: Feature {
         } else {
             showWindowlessApps = true
         }
+        if case .string(let value)? = config.values["titleMode"],
+           let parsed = SwitcherTitleMode(rawValue: value) {
+            titleMode = parsed
+        } else {
+            titleMode = .all
+        }
         SwitcherController.shared.configure(
             mouseFollow: mouseFollow,
-            showWindowlessApps: showWindowlessApps
+            showWindowlessApps: showWindowlessApps,
+            titleMode: titleMode
         )
     }
 }
