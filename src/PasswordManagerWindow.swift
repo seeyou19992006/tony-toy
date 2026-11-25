@@ -66,7 +66,7 @@ class PasteablePanel: NSPanel {
 }
 
 /// 密码管理窗口控制器
-class PasswordManagerWindow: NSWindow, NSWindowDelegate {
+class PasswordManagerWindow: NSWindow, NSWindowDelegate, NSSearchFieldDelegate {
     let vaultService = VaultService()  // 改为 public
     private var tableView: NSTableView?
     private var searchField: NSSearchField?
@@ -140,6 +140,17 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
 
     override func cancelOperation(_ sender: Any?) {
         handleEscapeKey()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            if textView.hasMarkedText() {
+                return false
+            }
+            handleEscapeKey()
+            return true
+        }
+        return false
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -219,6 +230,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         let search = NSSearchField(frame: NSRect(x: 0, y: 0, width: 380, height: 30))
         search.placeholderString = "搜索密码..."
+        search.delegate = self
         search.target = self
         search.action = #selector(searchChanged)
         topRow.addArrangedSubview(search)
