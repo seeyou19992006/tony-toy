@@ -1,4 +1,3 @@
-import Carbon.HIToolbox
 import Cocoa
 
 /// 居中的搜索面板，回车执行，Esc 或失焦关闭
@@ -17,7 +16,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var results: [AppEntry] = []
     private var pageSize = 8
     private var showWindowlessApps = true
-    private var autoSwitchEnglishInput = false
+    private var disableInputMethod = false
     private var currentPage = 0
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
@@ -29,10 +28,15 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let rowHeight: CGFloat = 66
     private let listBottomPadding: CGFloat = 14
 
-    func configure(pageSize: Int, showWindowlessApps: Bool, autoSwitchEnglishInput: Bool) {
+    func configure(pageSize: Int, showWindowlessApps: Bool, disableInputMethod: Bool) {
         self.pageSize = min(max(pageSize, 4), 12)
         self.showWindowlessApps = showWindowlessApps
-        self.autoSwitchEnglishInput = autoSwitchEnglishInput
+        self.disableInputMethod = disableInputMethod
+        if let editor = searchField.currentEditor() as? NSTextView {
+            editor.allowedInputSourceLocales = disableInputMethod
+                ? [NSAllRomanInputSourcesLocaleIdentifier]
+                : nil
+        }
         if isVisible {
             refresh()
         }
@@ -162,24 +166,16 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             dbg("active=\(NSApp.isActive) isKey=\(self.isKeyWindow) appKey=\(String(describing: NSApp.keyWindow))")
             let ok = self.makeFirstResponder(self.searchField)
             dbg("makeFirstResponder ok=\(ok) first=\(String(describing: self.firstResponder))")
-            if self.autoSwitchEnglishInput, self.isVisible {
-                self.switchToEnglishInputSource()
-            }
-            if let editor = self.searchField.currentEditor() {
+            if let editor = self.searchField.currentEditor() as? NSTextView {
+                editor.allowedInputSourceLocales = self.disableInputMethod
+                    ? [NSAllRomanInputSourcesLocaleIdentifier]
+                    : nil
                 editor.selectedRange = NSRange(location: (self.searchField.stringValue as NSString).length, length: 0)
             }
         }
         if let editor = searchField.currentEditor() {
             editor.selectedRange = NSRange(location: (searchField.stringValue as NSString).length, length: 0)
         }
-    }
-
-    /// 切换到系统首选的 ASCII（英文）输入法，仅在打开面板时调用一次，面板内手动切换仍有效
-    private func switchToEnglishInputSource() {
-        guard let source = TISCopyCurrentASCIICapableKeyboardInputSource()?.takeRetainedValue() else {
-            return
-        }
-        TISSelectInputSource(source)
     }
 
     /// 按结果条数调整面板高度，顶部位置保持不动
