@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import Cocoa
 
 /// 居中的搜索面板，回车执行，Esc 或失焦关闭
@@ -17,6 +18,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var pageSize = 8
     private var showWindowlessApps = true
     private var disableInputMethod = false
+    private var previousInputSource: TISInputSource?
     private var currentPage = 0
     private var selectedIndex = 0
     private var previousApp: NSRunningApplication?
@@ -146,6 +148,9 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     func show() {
         dbg("show() 被调用")
         previousApp = NSWorkspace.shared.frontmostApplication
+        if disableInputMethod, previousInputSource == nil {
+            previousInputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
+        }
 
         // 调试用：--query 预填搜索词
         if let flag = CommandLine.arguments.firstIndex(of: "--query"),
@@ -253,7 +258,15 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private func dismiss(restoreFocus: Bool) {
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
         guard isVisible else { return }
+        if let editor = searchField.currentEditor() as? NSTextView {
+            editor.allowedInputSourceLocales = nil
+        }
+        makeFirstResponder(nil)
         orderOut(nil)
+        if let previous = previousInputSource {
+            previousInputSource = nil
+            TISSelectInputSource(previous)
+        }
         results = []
         windowedBundleIDs.removeAll()
         runningBundleIDs.removeAll()
