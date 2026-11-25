@@ -15,6 +15,7 @@ final class LauncherFeature: Feature {
 
     var settings: [SettingItem] {
         [
+            .toggle(key: "enabled", title: "启用启动器", defaultValue: defaultEnabled),
             .hotkey(
                 key: "hotkey",
                 title: "呼出快捷键",
@@ -53,9 +54,9 @@ final class LauncherFeature: Feature {
     }
 
     func stop() {
-        // 不假装停止：控制器没有关闭面板/注销热键的公开接口，
-        // 也不能在这里自己改控制器文件。记录日志，等协调者补接口后再接。
-        dbg("启动器收到停止请求，但 LauncherController 缺少 stop()/setEnabled()，未执行")
+        guard isStarted else { return }
+        controller.stop()
+        isStarted = false
     }
 
     /// 菜单栏显示用的热键标题（如 `⌥ D`）

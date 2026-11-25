@@ -22,8 +22,19 @@ private func CGSCopySpacesForWindows(
 enum WindowedApps {
     private static let allSpacesMask: UInt32 = 0x7
 
+    struct WindowSnapshot {
+        let entries: [AppEntry]
+        /// 在任意显示器上屏中，或在其他 Space 处于原生全屏的进程 PID
+        let confirmedWindowPIDs: Set<pid_t>
+    }
+
     /// 屏幕上以及其它 Space（含原生全屏）真正有窗口的应用，按窗口层级排序（最近使用在前）
     static func current() -> [AppEntry] {
+        snapshot().entries
+    }
+
+    /// 单次扫描同时产出有窗口应用列表与「可见/全屏进程 PID」，避免切换器重复扫描 CGWindowList。
+    static func snapshot() -> WindowSnapshot {
         let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
                                               kCGNullWindowID) as? [[String: Any]] ?? []
         let cid = CGSMainConnectionID()
@@ -34,13 +45,15 @@ enum WindowedApps {
         var seen = Set<pid_t>()
         var axChecked = [pid_t: Bool]()
         var entries: [AppEntry] = []
+        var confirmedWindowPIDs = Set<pid_t>()
 
         for info in list {
             guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
                   let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { continue }
-            guard !seen.contains(pid) else { continue }
 
             let isOnscreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
+            var isConfirmedVisibleOrFullscreen = isOnscreen
+
             if !isOnscreen {
                 guard let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
                       let spaces = CGSCopySpacesForWindows(
@@ -52,7 +65,8 @@ enum WindowedApps {
                 guard onOtherSpace else { continue }
 
                 let matchesScreen = matchesAnyScreenFrame(info: info, screenSizes: screenSizes)
-                if !matchesScreen {
+                isConfirmedVisibleOrFullscreen = matchesScreen
+                if !matchesScreen && !seen.contains(pid) {
                     let hasAXWindow: Bool
                     if let cached = axChecked[pid] {
                         hasAXWindow = cached
@@ -68,7 +82,12 @@ enum WindowedApps {
                 }
             }
 
-            guard let app = NSRunningApplication(processIdentifier: pid),
+            if isConfirmedVisibleOrFullscreen {
+                confirmedWindowPIDs.insert(pid)
+            }
+
+            guard !seen.contains(pid),
+                  let app = NSRunningApplication(processIdentifier: pid),
                   app.activationPolicy == .regular || pid == selfPID,
                   let bundleID = app.bundleIdentifier,
                   let url = app.bundleURL else { continue }
@@ -78,36 +97,7 @@ enum WindowedApps {
             entries.append(AppEntry(name: name, bundleID: bundleID, url: url))
         }
 
-        return entries
-    }
-
-    /// 识别当前任意显示器上屏中（`isOnscreen == true`）或在其他 Space 处于原生全屏的进程
-    static func pidsWithVisibleOrFullscreenWindows() -> Set<pid_t> {
-        let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
-        let cid = CGSMainConnectionID()
-        let activeSpaces = currentActiveSpaceIDs(cid: cid)
-        let screenSizes = NSScreen.screens.map(\.frame.size)
-        var result = Set<pid_t>()
-
-        for info in list {
-            guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
-                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { continue }
-
-            let isOnscreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
-            if isOnscreen {
-                result.insert(pid)
-                continue
-            }
-
-            guard let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
-                  let spaces = CGSCopySpacesForWindows(
-                      cid, allSpacesMask, [windowNumber] as CFArray) as? [UInt64],
-                  !Set(spaces).subtracting(activeSpaces).isEmpty,
-                  matchesAnyScreenFrame(info: info, screenSizes: screenSizes) else { continue }
-            result.insert(pid)
-        }
-        return result
+        return WindowSnapshot(entries: entries, confirmedWindowPIDs: confirmedWindowPIDs)
     }
 
     private static func currentActiveSpaceIDs(cid: UInt32) -> Set<UInt64> {

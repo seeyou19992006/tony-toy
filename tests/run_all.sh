@@ -57,6 +57,28 @@ swiftc "$REPO_ROOT/src/Core/JSONValue.swift" \
        -framework Cocoa -framework Carbon -framework ApplicationServices -o /tmp/window-movement-tests
 /tmp/window-movement-tests
 
+swiftc "$REPO_ROOT/src/DebugLog.swift" \
+       "$REPO_ROOT/src/Pinyin.swift" \
+       "$REPO_ROOT/src/KeyConfigSupport.swift" \
+       "$REPO_ROOT/src/InputAliasRegistry.swift" \
+       "$REPO_ROOT/src/Core/JSONValue.swift" \
+       "$REPO_ROOT/src/Core/TonyToyConfig.swift" \
+       "$REPO_ROOT/src/Core/ConfigStore.swift" \
+       "$REPO_ROOT/src/Core/ConfigMigrator.swift" \
+       "$REPO_ROOT/src/Core/HotkeyKeySpec.swift" \
+       "$REPO_ROOT/src/Core/Feature.swift" \
+       "$REPO_ROOT/src/AppIndex.swift" \
+       "$REPO_ROOT/src/Activator.swift" \
+       "$REPO_ROOT/src/IconCache.swift" \
+       "$REPO_ROOT/src/WindowEnumerator.swift" \
+       "$REPO_ROOT/src/WindowedApps.swift" \
+       "$REPO_ROOT/src/UI/AppearanceAwareViews.swift" \
+       "$REPO_ROOT/src/SwitcherWindow.swift" \
+       "$REPO_ROOT/src/SwitcherController.swift" \
+       "$REPO_ROOT/tests/SwitcherAndPinyinTests.swift" \
+       -framework Cocoa -framework Carbon -framework ApplicationServices -o /tmp/switcher-pinyin-tests
+/tmp/switcher-pinyin-tests
+
 bash "$REPO_ROOT/tests/test_developer_settings.sh"
 bash "$REPO_ROOT/tests/test_package_signing_keychain.sh"
 

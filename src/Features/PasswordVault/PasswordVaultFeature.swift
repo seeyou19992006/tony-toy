@@ -21,6 +21,7 @@ final class PasswordVaultFeature: Feature {
 
     var settings: [SettingItem] {
         [
+            .toggle(key: "enabled", title: "启用密码管理器", defaultValue: defaultEnabled),
             .hotkey(
                 key: "hotkey", title: "呼出快捷键",
                 defaultValue: HotkeyKeySpec(key: "v", modifiers: ["command", "shift"])),
@@ -43,8 +44,9 @@ final class PasswordVaultFeature: Feature {
     private(set) var clipboardClearSeconds = 30
     private var autoLockTimer: Timer?
 
-    /// 呼出热键变更回调（供 main.swift 重新注册 Carbon 热键）
+    /// 呼出热键变更与启停回调（供 main.swift 注册/注销 Carbon 热键）
     var onHotkeyChanged: ((HotkeySpec) -> Void)?
+    var onEnabledChanged: ((Bool) -> Void)?
 
     /// 菜单栏显示用的热键标题（如 `⌘⇧V`）
     var hotkeyTitle: String {
@@ -56,13 +58,16 @@ final class PasswordVaultFeature: Feature {
         LauncherFeature.makeHotkeySpec(from: hotkey)
     }
 
-    func start() {}
+    func start() {
+        onEnabledChanged?(true)
+    }
 
-    /// 关闭功能时收起面板并停止自动锁定计时器。
+    /// 关闭功能时收起面板、注销热键并停止自动锁定计时器。
     func stop() {
         autoLockTimer?.invalidate()
         autoLockTimer = nil
         window?.orderOut(nil)
+        onEnabledChanged?(false)
     }
 
     // MARK: - 窗口转发

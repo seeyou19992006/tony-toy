@@ -308,7 +308,8 @@ final class SwitcherController {
 
     /// 正在运行的应用；多窗口应用展开成多个窗口项
     private static func buildItems(showWindowlessApps: Bool) -> [SwitcherItem] {
-        let windowed = WindowedApps.current()
+        let snapshot = WindowedApps.snapshot()
+        let windowed = snapshot.entries
         let windowedIDs = Set(windowed.map(\.bundleID))
         let background = showWindowlessApps
             ? WindowedApps.running()
@@ -318,7 +319,7 @@ final class SwitcherController {
 
         var items: [SwitcherItem] = []
 
-        let confirmedWindowPIDs = WindowedApps.pidsWithVisibleOrFullscreenWindows()
+        let confirmedWindowPIDs = snapshot.confirmedWindowPIDs
         let otherSpaceWindowedIDs = windowedIDs
         let selfPID = ProcessInfo.processInfo.processIdentifier
         for entry in windowed + background {

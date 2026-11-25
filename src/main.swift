@@ -194,17 +194,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // 7. 密码管理器的全局热键（Carbon，随配置热更新）
+        // 7. 密码管理器的全局热键（Carbon，随启用开关与热键配置动态注册/注销）
         passwordHotkey.onTrigger = { [weak self] in
             self?.showPasswordManager()
         }
         passwordFeature?.onHotkeyChanged = { [weak self] spec in
-            self?.passwordHotkey.register(keyCode: spec.keyCode, modifiers: spec.modifiers)
+            guard let self, self.isEnabled(FeatureID.passwordVault) else { return }
+            self.passwordHotkey.register(keyCode: spec.keyCode, modifiers: spec.modifiers)
         }
-        let pwdSpec = passwordFeature?.currentHotkeySpec
-        passwordHotkey.register(
-            keyCode: pwdSpec?.keyCode ?? 9,
-            modifiers: pwdSpec?.modifiers ?? (UInt32(cmdKey) | UInt32(shiftKey)))
+        passwordFeature?.onEnabledChanged = { [weak self] enabled in
+            guard let self else { return }
+            if enabled {
+                let spec = self.passwordFeature?.currentHotkeySpec
+                self.passwordHotkey.register(
+                    keyCode: spec?.keyCode ?? 9,
+                    modifiers: spec?.modifiers ?? (UInt32(cmdKey) | UInt32(shiftKey)))
+            } else {
+                self.passwordHotkey.unregister()
+            }
+        }
+        if isEnabled(FeatureID.passwordVault) {
+            let pwdSpec = passwordFeature?.currentHotkeySpec
+            passwordHotkey.register(
+                keyCode: pwdSpec?.keyCode ?? 9,
+                modifiers: pwdSpec?.modifiers ?? (UInt32(cmdKey) | UInt32(shiftKey)))
+        }
 
         // 8. 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()

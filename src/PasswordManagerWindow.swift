@@ -97,6 +97,14 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         setupUI()
     }
     
+    override func orderOut(_ sender: Any?) {
+        // 隐藏面板前注销密码框焦点，确保系统立刻退出 SecureEventInput
+        if firstResponder is NSTextView {
+            makeFirstResponder(nil)
+        }
+        super.orderOut(sender)
+    }
+
     /// 重写 keyDown：处理 ESC 关闭面板/恢复焦点
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // ESC
@@ -334,6 +342,12 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     // MARK: - 显示控制
 
     @objc func showMainView() {
+        // 先让密码框退出第一响应者，避免隐藏视图后系统 SecureEventInput 残留，
+        // 否则会导致全局 CGEventTap（Caps 层/快捷键）全部收不到键盘事件。
+        if firstResponder is NSTextView {
+            makeFirstResponder(nil)
+        }
+        masterPasswordInput?.stringValue = ""
         unlockView?.isHidden = true
         mainView?.isHidden = false
         reloadData()
@@ -344,6 +358,9 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     }
 
     @objc func showUnlockView() {
+        if firstResponder is NSTextView {
+            makeFirstResponder(nil)
+        }
         unlockView?.isHidden = false
         mainView?.isHidden = true
         // 延迟设置焦点，等待窗口成为 key window

@@ -33,31 +33,31 @@ class PasswordPaster {
 
     /// 模拟 Cmd+V 键盘事件 - 使用 CGEventCreateKeyboardEvent
     private static func simulateCmdV() {
-        print("📋 PasswordPaster: 发送 Cmd+V 事件")
+        dbg("PasswordPaster: 发送 Cmd+V 事件")
 
         // 使用 nil source 让系统选择
         let source: CGEventSource? = nil
 
         // Cmd+V - 使用 CGEventCreateKeyboardEvent
         guard let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Command), keyDown: true) else {
-            print("❌ cmdDown 失败")
+            dbg("PasswordPaster: cmdDown 失败")
             return
         }
         cmdDown.flags = .maskCommand
 
         guard let vDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true) else {
-            print("❌ vDown 失败")
+            dbg("PasswordPaster: vDown 失败")
             return
         }
         vDown.flags = .maskCommand
 
         guard let vUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
-            print("❌ vUp 失败")
+            dbg("PasswordPaster: vUp 失败")
             return
         }
 
         guard let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Command), keyDown: false) else {
-            print("❌ cmdUp 失败")
+            dbg("PasswordPaster: cmdUp 失败")
             return
         }
 
@@ -70,6 +70,6 @@ class PasswordPaster {
         usleep(10000)
         cmdUp.post(tap: .cghidEventTap)
 
-        print("✅ PasswordPaster: Cmd+V 发送完成")
+        dbg("PasswordPaster: Cmd+V 发送完成")
     }
 }
