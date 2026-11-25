@@ -14,12 +14,6 @@ enum IconCache {
         return cache
     }()
 
-    private static let smallIcons: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 64
-        return cache
-    }()
-
     static func icon(for entry: AppEntry, gray: Bool) -> NSImage {
         let key = entry.bundleID as NSString
 
@@ -36,20 +30,6 @@ enum IconCache {
         image.size = NSSize(width: 96, height: 96)
         icons.setObject(image, forKey: key)
         return image
-    }
-
-    /// 启动器列表用的 36×36 小图标，复用同一份缓存池避免双份存储
-    static func smallIcon(for entry: AppEntry) -> NSImage {
-        let key = entry.bundleID as NSString
-        if let cached = smallIcons.object(forKey: key) { return cached }
-        let source = icon(for: entry, gray: false)
-        let small = NSImage(size: NSSize(width: 36, height: 36))
-        small.lockFocus()
-        source.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36),
-                    from: .zero, operation: .copy, fraction: 1.0)
-        small.unlockFocus()
-        smallIcons.setObject(small, forKey: key)
-        return small
     }
 
     /// 后台预热：提前读盘并生成灰度版本，避免首次弹出时才计算

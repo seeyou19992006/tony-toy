@@ -365,7 +365,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     private func icon(for entry: AppEntry) -> NSImage {
-        IconCache.smallIcon(for: entry)
+        IconCache.icon(for: entry, gray: false)
     }
 
     // MARK: - 键盘

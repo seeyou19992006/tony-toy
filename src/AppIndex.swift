@@ -139,17 +139,63 @@ final class AppIndex {
         result.append((name: name, bundleID: bundleID, url: url, names: names))
     }
 
+    private static var pinyinCacheURL: URL {
+        KeyConfigSupport.defaultConfigURL(relativePath: KeyConfigSupport.configBasePath)
+            .appendingPathComponent("pinyin-cache.json")
+    }
+
     private func resolveExtraPinyinReadings(for names: [String]) -> [Character: String] {
-        var uniqueChars = ""
-        var seenChars = Set<Character>()
+        var persisted = loadPinyinCache()
+        var missingChars = ""
+        var seenMissing = Set<Character>()
         for name in names {
-            for ch in name where !ch.isASCII && Polyphone.table[ch] == nil && seenChars.insert(ch).inserted {
-                uniqueChars.append(ch)
+            for ch in name where !ch.isASCII && Polyphone.table[ch] == nil {
+                let key = String(ch)
+                if persisted[key] == nil, seenMissing.insert(ch).inserted {
+                    missingChars.append(ch)
+                }
             }
         }
-        guard !uniqueChars.isEmpty,
-              let executable = Bundle.main.executablePath else { return [:] }
 
+        if !missingChars.isEmpty, let converted = convertViaSubprocess(missingChars) {
+            var didAdd = false
+            for (k, v) in converted where persisted[k] == nil {
+                persisted[k] = v
+                didAdd = true
+            }
+            if didAdd {
+                savePinyinCache(persisted)
+            }
+        }
+
+        var result: [Character: String] = [:]
+        for (k, v) in persisted {
+            if let ch = k.first {
+                result[ch] = v
+            }
+        }
+        return result
+    }
+
+    private func loadPinyinCache() -> [String: String] {
+        guard let data = try? Data(contentsOf: Self.pinyinCacheURL),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private func savePinyinCache(_ dict: [String: String]) {
+        let directory = Self.pinyinCacheURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(dict) else { return }
+        try? data.write(to: Self.pinyinCacheURL, options: .atomic)
+    }
+
+    private func convertViaSubprocess(_ chars: String) -> [String: String]? {
+        guard let executable = Bundle.main.executablePath else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["--convert-pinyin"]
@@ -161,7 +207,7 @@ final class AppIndex {
 
         do {
             try process.run()
-            if let inputData = uniqueChars.data(using: .utf8) {
+            if let inputData = chars.data(using: .utf8) {
                 inPipe.fileHandleForWriting.write(inputData)
             }
             try? inPipe.fileHandleForWriting.close()
@@ -169,17 +215,11 @@ final class AppIndex {
             process.waitUntilExit()
             guard process.terminationStatus == 0,
                   let dict = try JSONSerialization.jsonObject(with: outputData) as? [String: String] else {
-                return [:]
+                return nil
             }
-            var result: [Character: String] = [:]
-            for (k, v) in dict {
-                if let ch = k.first {
-                    result[ch] = v
-                }
-            }
-            return result
+            return dict
         } catch {
-            return [:]
+            return nil
         }
     }
 
