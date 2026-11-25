@@ -38,14 +38,15 @@ enum Prewarmer {
                 _ = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value)
             }
 
-            // 3. 图标（含灰度版本）
+            // 3. 仅预热有窗口应用的彩色图标，避免为所有后台应用提前生成灰度位图
             let windowed = Set(WindowedApps.current().map(\.bundleID))
             for app in apps {
                 guard let bundleID = app.bundleIdentifier,
+                      windowed.contains(bundleID),
                       let url = app.bundleURL else { continue }
                 let entry = AppEntry(name: app.localizedName ?? bundleID,
                                      bundleID: bundleID, url: url)
-                _ = IconCache.icon(for: entry, gray: !windowed.contains(bundleID))
+                _ = IconCache.icon(for: entry, gray: false)
             }
         }
     }

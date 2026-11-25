@@ -244,6 +244,10 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
         guard isVisible else { return }
         orderOut(nil)
+        results = []
+        windowedBundleIDs.removeAll()
+        runningBundleIDs.removeAll()
+        tableView.reloadData()
         if restoreFocus,
            let previous = previousApp,
            previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {

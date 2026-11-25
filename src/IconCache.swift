@@ -4,13 +4,13 @@ import AppKit
 enum IconCache {
     private static let icons: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 64
+        cache.countLimit = 32
         return cache
     }()
 
     private static let grayIcons: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 64
+        cache.countLimit = 32
         return cache
     }()
 
