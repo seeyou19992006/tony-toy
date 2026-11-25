@@ -319,6 +319,7 @@ final class SwitcherController {
         var items: [SwitcherItem] = []
 
         let confirmedWindowPIDs = WindowedApps.pidsWithVisibleOrFullscreenWindows()
+        let otherSpaceWindowedIDs = windowedIDs
         let selfPID = ProcessInfo.processInfo.processIdentifier
         for entry in windowed + background {
             guard let app = NSRunningApplication
@@ -349,8 +350,11 @@ final class SwitcherController {
             let windows = WindowEnumerator.standardWindows(of: app.processIdentifier)
 
             if windows.isEmpty {
-                // 若该进程在任意显示器上屏中，或在其他 Space 处于原生全屏，即使 AX 没取到窗口也保持亮色。
+                // 若该进程在任意显示器上屏中、在其他 Space 处于原生全屏、或 `kAXMainWindow` 为标准窗口
+                //（如非活跃 Space 上的 DBX），即使 `kAXWindows` 返回空也保持亮色。
                 let hasOtherSpaceWindow = confirmedWindowPIDs.contains(app.processIdentifier)
+                    || (otherSpaceWindowedIDs.contains(entry.bundleID)
+                        && WindowEnumerator.hasStandardMainWindow(of: app.processIdentifier))
                 if hasOtherSpaceWindow {
                     items.append(SwitcherItem(entry: entry, window: nil,
                                               windowTitle: nil, hasWindow: true))

@@ -55,4 +55,21 @@ enum WindowEnumerator {
 
         return result
     }
+
+    /// 跨桌面应用（如在非活跃 Space）`kAXWindowsAttribute` 可能返回空，
+    /// 此时通过 `kAXMainWindowAttribute` 校验它是否仍有一个标准主窗口（关闭到托盘的 Electron 应用会返回 nil）。
+    static func hasStandardMainWindow(of pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+
+        var mainRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMainWindowAttribute as CFString, &mainRef) == .success,
+              let mainRef else { return false }
+
+        let element = unsafeBitCast(mainRef, to: AXUIElement.self)
+        var subroleRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleRef) == .success,
+              let subrole = subroleRef as? String else { return false }
+        return subrole == kAXStandardWindowSubrole
+    }
 }

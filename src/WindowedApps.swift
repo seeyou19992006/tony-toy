@@ -59,7 +59,8 @@ enum WindowedApps {
                     } else {
                         let found = pid == selfPID
                             ? hasOwnStandardWindow()
-                            : !WindowEnumerator.standardWindows(of: pid).isEmpty
+                            : (!WindowEnumerator.standardWindows(of: pid).isEmpty
+                                || WindowEnumerator.hasStandardMainWindow(of: pid))
                         axChecked[pid] = found
                         hasAXWindow = found
                     }
