@@ -17,7 +17,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var results: [AppEntry] = []
     private var pageSize = 8
     private var showWindowlessApps = true
-    private var disableInputMethod = false
+    private var autoSwitchEnglishInput = false
     private var previousInputSource: TISInputSource?
     private var currentPage = 0
     private var selectedIndex = 0
@@ -30,15 +30,10 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let rowHeight: CGFloat = 66
     private let listBottomPadding: CGFloat = 14
 
-    func configure(pageSize: Int, showWindowlessApps: Bool, disableInputMethod: Bool) {
+    func configure(pageSize: Int, showWindowlessApps: Bool, autoSwitchEnglishInput: Bool) {
         self.pageSize = min(max(pageSize, 4), 12)
         self.showWindowlessApps = showWindowlessApps
-        self.disableInputMethod = disableInputMethod
-        if let editor = searchField.currentEditor() as? NSTextView {
-            editor.allowedInputSourceLocales = disableInputMethod
-                ? [NSAllRomanInputSourcesLocaleIdentifier]
-                : nil
-        }
+        self.autoSwitchEnglishInput = autoSwitchEnglishInput
         if isVisible {
             refresh()
         }
@@ -148,9 +143,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     func show() {
         dbg("show() 被调用")
         previousApp = NSWorkspace.shared.frontmostApplication
-        if disableInputMethod, previousInputSource == nil {
-            previousInputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
-        }
 
         // 调试用：--query 预填搜索词
         if let flag = CommandLine.arguments.firstIndex(of: "--query"),
@@ -171,16 +163,36 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
             dbg("active=\(NSApp.isActive) isKey=\(self.isKeyWindow) appKey=\(String(describing: NSApp.keyWindow))")
             let ok = self.makeFirstResponder(self.searchField)
             dbg("makeFirstResponder ok=\(ok) first=\(String(describing: self.firstResponder))")
-            if let editor = self.searchField.currentEditor() as? NSTextView {
-                editor.allowedInputSourceLocales = self.disableInputMethod
-                    ? [NSAllRomanInputSourcesLocaleIdentifier]
-                    : nil
+            if self.autoSwitchEnglishInput, self.isVisible {
+                self.switchToEnglishInputSource()
+            }
+            if let editor = self.searchField.currentEditor() {
                 editor.selectedRange = NSRange(location: (self.searchField.stringValue as NSString).length, length: 0)
             }
         }
         if let editor = searchField.currentEditor() {
             editor.selectedRange = NSRange(location: (searchField.stringValue as NSString).length, length: 0)
         }
+    }
+
+    /// 切换到系统首选的 ASCII（英文）输入法，并记录打开前的输入法以便关闭时恢复；面板内允许临时手动切换
+    private func switchToEnglishInputSource() {
+        guard let english = TISCopyCurrentASCIICapableKeyboardInputSource()?.takeRetainedValue() else {
+            return
+        }
+        if previousInputSource == nil,
+           let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+           inputSourceID(current) != inputSourceID(english) {
+            previousInputSource = current
+        }
+        TISSelectInputSource(english)
+    }
+
+    private func inputSourceID(_ source: TISInputSource) -> String? {
+        guard let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+            return nil
+        }
+        return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
     }
 
     /// 按结果条数调整面板高度，顶部位置保持不动
@@ -258,10 +270,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private func dismiss(restoreFocus: Bool) {
         dbg("dismiss restoreFocus=\(restoreFocus) isVisible=\(isVisible)")
         guard isVisible else { return }
-        if let editor = searchField.currentEditor() as? NSTextView {
-            editor.allowedInputSourceLocales = nil
-        }
-        makeFirstResponder(nil)
         orderOut(nil)
         if let previous = previousInputSource {
             previousInputSource = nil

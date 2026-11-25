@@ -14,7 +14,7 @@ final class LauncherController {
     private(set) var hotkeySpec = LauncherSettings.selectedHotkey
     private var pageSize = 8
     private var showWindowlessApps = true
-    private var disableInputMethod = false
+    private var autoSwitchEnglishInput = false
 
     /// 菜单栏显示用的热键标题（如 `⌥ D`）
     var hotkeyTitle: String { hotkeySpec.title }
@@ -36,7 +36,7 @@ final class LauncherController {
         window.configure(
             pageSize: pageSize,
             showWindowlessApps: showWindowlessApps,
-            disableInputMethod: disableInputMethod
+            autoSwitchEnglishInput: autoSwitchEnglishInput
         )
         palette = window
 
@@ -47,16 +47,16 @@ final class LauncherController {
         pageSize: Int,
         pinyinMatch: Bool,
         showWindowlessApps: Bool,
-        disableInputMethod: Bool
+        autoSwitchEnglishInput: Bool
     ) {
         self.pageSize = min(max(pageSize, 4), 12)
         self.showWindowlessApps = showWindowlessApps
-        self.disableInputMethod = disableInputMethod
+        self.autoSwitchEnglishInput = autoSwitchEnglishInput
         index.pinyinMatchEnabled = pinyinMatch
         palette?.configure(
             pageSize: self.pageSize,
             showWindowlessApps: showWindowlessApps,
-            disableInputMethod: disableInputMethod
+            autoSwitchEnglishInput: autoSwitchEnglishInput
         )
     }
 
