@@ -24,6 +24,7 @@ final class LauncherFeature: Feature {
             .number(key: "pageSize", title: "每页显示项数", defaultValue: 8, range: 4...12),
             .toggle(key: "pinyinMatch", title: "拼音匹配", defaultValue: true),
             .toggle(key: "showWindowlessApps", title: "显示无窗口应用", defaultValue: true),
+            .toggle(key: "autoSwitchEnglishInput", title: "打开时自动切换英文输入法", defaultValue: false),
         ]
     }
 
@@ -82,10 +83,17 @@ final class LauncherFeature: Feature {
         } else {
             showWindowlessApps = true
         }
+        let autoSwitchEnglishInput: Bool
+        if case .bool(let value)? = config.values["autoSwitchEnglishInput"] {
+            autoSwitchEnglishInput = value
+        } else {
+            autoSwitchEnglishInput = false
+        }
         controller.configure(
             pageSize: pageSize,
             pinyinMatch: pinyinMatch,
-            showWindowlessApps: showWindowlessApps
+            showWindowlessApps: showWindowlessApps,
+            autoSwitchEnglishInput: autoSwitchEnglishInput
         )
 
         guard let keySpec = SettingsPaneViewController.decodeHotkey(config.values["hotkey"])
