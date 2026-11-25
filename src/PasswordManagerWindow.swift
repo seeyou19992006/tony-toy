@@ -38,7 +38,20 @@ class PasteablePanel: NSPanel {
         return false
     }
     
+    override func cancelOperation(_ sender: Any?) {
+        if let parent = sheetParent {
+            parent.endSheet(self)
+        } else {
+            close()
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            cancelOperation(nil)
+            return
+        }
         // 拦截 Cmd+V，找到当前焦点输入框并执行粘贴
         if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
             if let field = firstResponder as? NSTextField, field.isEditable {
@@ -111,20 +124,42 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         super.orderOut(sender)
     }
 
+    private func handleEscapeKey() {
+        if let addPanel = currentAddPanel {
+            endSheet(addPanel)
+        } else if let editPanel = currentEditPanel {
+            endSheet(editPanel)
+        } else {
+            let appToRestore = previousApp
+            orderOut(nil)
+            DispatchQueue.main.async {
+                appToRestore?.activate()
+            }
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        handleEscapeKey()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           isVisible {
+            if let editor = firstResponder as? NSTextView, editor.hasMarkedText() {
+                return super.performKeyEquivalent(with: event)
+            }
+            handleEscapeKey()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     /// 重写 keyDown：处理 ESC 关闭面板/恢复焦点
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // ESC
-            if let addPanel = currentAddPanel {
-                endSheet(addPanel)
-            } else if let editPanel = currentEditPanel {
-                endSheet(editPanel)
-            } else {
-                let appToRestore = previousApp
-                orderOut(nil)
-                DispatchQueue.main.async {
-                    appToRestore?.activate()
-                }
-            }
+        if event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            handleEscapeKey()
         } else {
             super.keyDown(with: event)
         }
@@ -203,22 +238,6 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                   self.isVisible,
                   event.window === self || event.window?.sheetParent === self else {
                 return event
-            }
-            
-            // ESC 键 - 关闭面板并恢复焦点（不需要搜索框焦点，全局生效）
-            if event.keyCode == 53 {
-                if let addPanel = self.currentAddPanel {
-                    self.endSheet(addPanel)
-                } else if let editPanel = self.currentEditPanel {
-                    self.endSheet(editPanel)
-                } else {
-                    let appToRestore = self.previousApp
-                    self.orderOut(nil)
-                    DispatchQueue.main.async {
-                        appToRestore?.activate()
-                    }
-                }
-                return nil
             }
             
             // 以下快捷键仅在搜索框有焦点时生效
