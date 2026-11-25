@@ -26,8 +26,11 @@ enum IconCache {
         }
 
         if let cached = icons.object(forKey: key) { return cached }
-        let image = NSWorkspace.shared.icon(forFile: entry.url.path)
-        image.size = NSSize(width: 96, height: 96)
+        let raw = NSWorkspace.shared.icon(forFile: entry.url.path)
+        raw.size = NSSize(width: 96, height: 96)
+        // 统一裁剪成 96×96 @2x（192×192 像素）Retina 位图并丢弃 512/1024 超大图层，
+        // 兼顾切换器（96pt）与启动器（36pt）清晰度，同时大幅减少 CoreAnimation 显存占用。
+        let image = rasterize(raw, colorSpace: CGColorSpaceCreateDeviceRGB())
         icons.setObject(image, forKey: key)
         return image
     }
@@ -45,6 +48,10 @@ enum IconCache {
     /// 不用 CIFilter——CoreImage 上下文初始化首次接近 5 秒；
     /// 交给 CoreGraphics 在灰度色彩空间里绘制，单次不到 1 毫秒。
     private static func desaturated(_ image: NSImage) -> NSImage {
+        rasterize(image, colorSpace: CGColorSpaceCreateDeviceGray())
+    }
+
+    private static func rasterize(_ image: NSImage, colorSpace: CGColorSpace) -> NSImage {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return image }
 
@@ -57,7 +64,7 @@ enum IconCache {
                                       height: height,
                                       bitsPerComponent: 8,
                                       bytesPerRow: 0,
-                                      space: CGColorSpaceCreateDeviceGray(),
+                                      space: colorSpace,
                                       // 必须带 alpha：none 会把图标圆角外的透明区域画成黑色
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
@@ -66,7 +73,7 @@ enum IconCache {
 
         context.interpolationQuality = .high
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let gray = context.makeImage() else { return image }
-        return NSImage(cgImage: gray, size: size)
+        guard let output = context.makeImage() else { return image }
+        return NSImage(cgImage: output, size: size)
     }
 }
