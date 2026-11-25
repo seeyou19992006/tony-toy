@@ -22,6 +22,9 @@ final class EventTap {
     private let handler: Handler
 
     private var tap: CFMachPort?
+    /// 必须自己持有：stop() 时要显式移除，否则 RunLoop 拿着 source 不放，
+    /// 而 source 的 refcon 指向本对象——本对象一释放，下一个事件就是野指针。
+    private var runLoopSource: CFRunLoopSource?
     private var retryCount = 0
     private static let maxRetries = 10
     private static let retryDelay: TimeInterval = 1.0
@@ -42,10 +45,7 @@ final class EventTap {
     }
 
     deinit {
-        // 不能在这里调 stop()：CFMachPort 的 run loop source 可能已失效
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
+        teardown()
     }
 
     // MARK: - 生命周期
@@ -57,12 +57,33 @@ final class EventTap {
     }
 
     func stop() {
+        teardown()
+        retryCount = 0
+        InputRegistry.shared.unregister(self)
+    }
+
+    /// 彻底拆掉这个 tap。
+    ///
+    /// 只 `tapEnable(false)` 是不够的：RunLoop 那边还挂着 source，
+    /// 系统事件队列里也可能还有一个在途事件。此时如果本对象被释放，
+    /// 回调里的 `takeUnretainedValue()` 就会拿到野指针。
+    /// 实测崩溃点在 `dispatch` 里拼 `name` 的字符串时（SIGSEGV @ 0x18）。
+    ///
+    /// 顺序要严格：先停 tap → 摘 source → invalidate port → 最后清空引用。
+    private func teardown() {
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
+
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            runLoopSource = nil
+        }
+
+        if let tap {
+            CFMachPortInvalidate(tap)
+        }
         tap = nil
-        retryCount = 0
-        InputRegistry.shared.unregister(self)
     }
 
     // MARK: - 内部
@@ -89,10 +110,12 @@ final class EventTap {
 
         tap = created
         retryCount = 0
-        CFRunLoopAddSource(
-            CFRunLoopGetCurrent(),
-            CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0),
-            .commonModes)
+
+        // 保存 source 引用，teardown 时才能摘掉（见 teardown 的说明）
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        runLoopSource = source
+
         CGEvent.tapEnable(tap: created, enable: true)
 
         InputRegistry.shared.register(self)

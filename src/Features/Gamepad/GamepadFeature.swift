@@ -58,9 +58,10 @@ final class GamepadFeature: Feature {
             bridge.onHomePressed = nil
             return
         }
-        bridge.onHomePressed = { [weak self] in
+        bridge.onHomePressed = { [weak self] device in
             self?.actionExecutor.dispatch(
-                .ensureApplicationRunning(bundleIdentifier: Self.macDeckBundleIdentifier))
+                .ensureApplicationRunning(bundleIdentifier: Self.macDeckBundleIdentifier,
+                                          controllerName: device))
         }
     }
 

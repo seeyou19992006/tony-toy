@@ -89,10 +89,11 @@ final class AppActionExecutor {
             performUIAction { [self] in
                 maximizeFrontmostWindow()
             }
-        case .ensureApplicationRunning(let bundleIdentifier):
+        case .ensureApplicationRunning(let bundleIdentifier, let controllerName):
             guard phase != .keyUp else { return }
             performUIAction { [self] in
-                ensureApplicationRunning(bundleIdentifier: bundleIdentifier)
+                ensureApplicationRunning(bundleIdentifier: bundleIdentifier,
+                                         controllerName: controllerName)
             }
         }
     }
@@ -107,7 +108,7 @@ final class AppActionExecutor {
     /// 只做一件事：目标应用不在运行就拉起来。
     /// 在跑的时候完全不动手 —— Home 键由目标应用自己监听处理，
     /// 这里再投一次通知就会变成双触发。
-    private func ensureApplicationRunning(bundleIdentifier: String) {
+    private func ensureApplicationRunning(bundleIdentifier: String, controllerName: String?) {
         let now = Date()
 
         if let until = suppressLaunchUntil[bundleIdentifier], now < until {
@@ -134,8 +135,13 @@ final class AppActionExecutor {
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        // 目标应用刚起来是隐藏态，直接要求展开面板
-        configuration.arguments = ["--show-deck"]
+        // 目标应用刚起来是隐藏态，直接要求展开面板；
+        // 顺带把按 Home 的那台手柄名带过去，否则它只能按名字排序瞎猜
+        var arguments = ["--show-deck"]
+        if let controllerName, !controllerName.isEmpty {
+            arguments += ["--controller", controllerName]
+        }
+        configuration.arguments = arguments
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
             if let error {
                 dbg("拉起 \(bundleIdentifier) 失败：\(error.localizedDescription)")

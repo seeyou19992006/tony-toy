@@ -384,4 +384,10 @@ let delegate = AppDelegate()
 app.delegate = delegate
 // 与独立版对齐：run 之前就确定 activationPolicy，窗口的 field editor 行为才正常
 app.setActivationPolicy(.accessory)
+
+// 诊断用：反复开关追踪窗口，验证 EventTap 拆除时不会留下悬垂回调
+if CommandLine.arguments.contains("--keytrace-selftest") {
+    DispatchQueue.main.async { KeyTraceSelfTest.run() }
+}
+
 app.run()

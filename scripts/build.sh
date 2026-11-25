@@ -22,7 +22,7 @@ APP_RESOURCES_DIR="$APP_CONTENTS_DIR/Resources"
 OUTPUT_BINARY="$APP_MACOS_DIR/$BINARY_NAME"
 # Build for Apple Silicon (arm64) using target triple
 SWIFT_FLAGS=(-O -whole-module-optimization -target arm64-apple-macosx11.0)
-LINK_FLAGS=(-framework Cocoa -framework CoreAudio -framework IOKit)
+LINK_FLAGS=(-framework Cocoa -framework CoreAudio -framework IOKit -framework GameController)
 SOURCE_FILES_ARRAY=()
 
 collect_source_files() {

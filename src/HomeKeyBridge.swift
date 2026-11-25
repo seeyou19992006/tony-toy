@@ -53,8 +53,15 @@ struct HomeKeySpec {
 final class HomeKeyBridge {
     static let shared = HomeKeyBridge()
 
-    /// Home 按下沿回调（主线程）
-    var onHomePressed: (() -> Void)?
+    /// Home 按下沿回调（主线程）。参数是触发它的手柄名，用来告诉目标应用"是哪台按的"。
+    var onHomePressed: ((String) -> Void)?
+
+    /// 旁听者（按键追踪面板用）。
+    ///
+    /// 和 `onHomePressed` 是两套：`onHomePressed` 只有一个，归 GamepadFeature，
+    /// 会受功能开关控制；旁听者可以有多个，而且**不受 `enabled` 影响**——
+    /// 排查「开关关了但键还是不灵」时，恰恰需要看到按键本身到没到。
+    private var homeObservers: [UUID: (String) -> Void] = [:]
 
     /// 每台设备一套上下文：独立缓冲区 + 独立按键状态
     private final class DeviceContext {
@@ -81,7 +88,7 @@ final class HomeKeyBridge {
             guard pressed else { return }
             events += 1
             dbg("手柄 Home 按下 ← \(name) [\(spec.label)] byte=0x\(String(byte, radix: 16))")
-            bridge.emitHome()
+            bridge.emitHome(device: name)
         }
     }
 
@@ -131,11 +138,33 @@ final class HomeKeyBridge {
         enabled = value
     }
 
-    func emitHome() {
+    func emitHome(device: String) {
+        // 旁听者先看：它们代表"这个键确实到了"，与功能开关无关
+        if !homeObservers.isEmpty {
+            let blocks = Array(homeObservers.values)
+            DispatchQueue.main.async {
+                for block in blocks { block(device) }
+            }
+        }
+
         guard enabled else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.onHomePressed?()
+            self?.onHomePressed?(device)
         }
+    }
+
+    // MARK: - 旁听
+
+    /// 注册一个 Home 观察者。返回值用于移除，必须保存。
+    @discardableResult
+    func addHomeObserver(_ block: @escaping (String) -> Void) -> UUID {
+        let id = UUID()
+        homeObservers[id] = block
+        return id
+    }
+
+    func removeHomeObserver(_ id: UUID) {
+        homeObservers.removeValue(forKey: id)
     }
 
     // MARK: - 设备接入

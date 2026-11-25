@@ -64,7 +64,9 @@ enum AppAction: Equatable {
     /// 确保目标应用在运行：没跑就拉起来（并直接展开面板），已经在跑就什么都不做。
     /// 目标应用自己还监听手柄 Home，所以「在跑」的时候这一下交给它处理，
     /// 两边不抢同一颗键。
-    case ensureApplicationRunning(bundleIdentifier: String)
+    /// controllerName 是触发它的手柄名，拉起时作为参数传过去，让目标应用
+    /// 一开始就知道该显示哪台手柄。
+    case ensureApplicationRunning(bundleIdentifier: String, controllerName: String?)
 }
 
 enum AppActionError: Error, CustomStringConvertible {
@@ -138,7 +140,7 @@ enum AppActionResolver {
             guard let bundleIdentifier = spec.bundleIdentifier else {
                 throw AppActionError.missingBundleIdentifier
             }
-            return .ensureApplicationRunning(bundleIdentifier: bundleIdentifier)
+            return .ensureApplicationRunning(bundleIdentifier: bundleIdentifier, controllerName: nil)
         default:
             throw AppActionError.unknownAction(resolvedAction)
         }
