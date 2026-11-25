@@ -58,6 +58,7 @@ enum IconCache {
         let scale: CGFloat = 2  // 视网膜屏
         let width = Int(size.width * scale)
         let height = Int(size.height * scale)
+        var proposedRect = CGRect(origin: .zero, size: size)
         guard width > 0, height > 0,
               let context = CGContext(data: nil,
                                       width: width,
@@ -67,7 +68,7 @@ enum IconCache {
                                       space: colorSpace,
                                       // 必须带 alpha：none 会把图标圆角外的透明区域画成黑色
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+              let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
             return image
         }
 
