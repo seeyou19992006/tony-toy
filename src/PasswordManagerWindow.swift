@@ -199,7 +199,11 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
         
         // 本地监控：搜索框键盘事件（回车粘贴、方向键导航、左右切换字段）
         searchFieldMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self else { return event }
+            guard let self = self,
+                  self.isVisible,
+                  event.window === self || event.window?.sheetParent === self else {
+                return event
+            }
             
             // ESC 键 - 关闭面板并恢复焦点（不需要搜索框焦点，全局生效）
             if event.keyCode == 53 {
@@ -889,7 +893,12 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
     
     /// 在窗口显示前记录当前前台应用
     func recordPreviousApp() {
-        previousApp = NSWorkspace.shared.frontmostApplication
+        let front = NSWorkspace.shared.frontmostApplication
+        if front?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previousApp = front
+        } else {
+            previousApp = nil
+        }
     }
     
     /// 获取当前选中的条目（表格选中行，若无选中则取第一个）
