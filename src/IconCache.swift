@@ -1,26 +1,55 @@
 import AppKit
 
-/// 应用图标缓存：避免每次弹出切换器都重新读盘和做去色
+/// 应用图标缓存：使用 NSCache 限制上限，避免长期运行内存只增不减
 enum IconCache {
-    private static var icons: [String: NSImage] = [:]
-    private static var grayIcons: [String: NSImage] = [:]
+    private static let icons: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    private static let grayIcons: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    private static let smallIcons: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
 
     static func icon(for entry: AppEntry, gray: Bool) -> NSImage {
-        let key = entry.bundleID
+        let key = entry.bundleID as NSString
 
         if gray {
-            if let cached = grayIcons[key] { return cached }
+            if let cached = grayIcons.object(forKey: key) { return cached }
             let base = icon(for: entry, gray: false)
             let result = desaturated(base)
-            grayIcons[key] = result
+            grayIcons.setObject(result, forKey: key)
             return result
         }
 
-        if let cached = icons[key] { return cached }
+        if let cached = icons.object(forKey: key) { return cached }
         let image = NSWorkspace.shared.icon(forFile: entry.url.path)
         image.size = NSSize(width: 96, height: 96)
-        icons[key] = image
+        icons.setObject(image, forKey: key)
         return image
+    }
+
+    /// 启动器列表用的 36×36 小图标，复用同一份缓存池避免双份存储
+    static func smallIcon(for entry: AppEntry) -> NSImage {
+        let key = entry.bundleID as NSString
+        if let cached = smallIcons.object(forKey: key) { return cached }
+        let source = icon(for: entry, gray: false)
+        let small = NSImage(size: NSSize(width: 36, height: 36))
+        small.lockFocus()
+        source.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36),
+                    from: .zero, operation: .copy, fraction: 1.0)
+        small.unlockFocus()
+        smallIcons.setObject(small, forKey: key)
+        return small
     }
 
     /// 后台预热：提前读盘并生成灰度版本，避免首次弹出时才计算

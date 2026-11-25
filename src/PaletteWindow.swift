@@ -18,7 +18,6 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private var showWindowlessApps = true
     private var currentPage = 0
     private var selectedIndex = 0
-    private var iconCache: [String: NSImage] = [:]
     private var previousApp: NSRunningApplication?
     private var windowedBundleIDs = Set<String>()
     private var runningBundleIDs = Set<String>()
@@ -366,13 +365,7 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     private func icon(for entry: AppEntry) -> NSImage {
-        if let cached = iconCache[entry.bundleID] {
-            return cached
-        }
-        let image = NSWorkspace.shared.icon(forFile: entry.url.path)
-        image.size = NSSize(width: 52, height: 52)
-        iconCache[entry.bundleID] = image
-        return image
+        IconCache.smallIcon(for: entry)
     }
 
     // MARK: - 键盘

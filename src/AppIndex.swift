@@ -21,6 +21,8 @@ struct AppEntry: Hashable {
 final class AppIndex {
     private(set) var entries: [AppEntry] = []
     var pinyinMatchEnabled = true
+    private var lastScanDate: Date?
+    private static let minimumScanInterval: TimeInterval = 6 * 3600
 
     /// 系统应用的中文名不在自己的 Info.plist 里，系统 API 取不到，只能内置一份常见对照
     private static let chineseAliases: [String: String] = [
@@ -55,49 +57,76 @@ final class AppIndex {
         "/System/Library/CoreServices"
     ]
 
-    func scan() {
+    func scan(force: Bool = false) {
+        if !force, !entries.isEmpty,
+           let lastScanDate, Date().timeIntervalSince(lastScanDate) < Self.minimumScanInterval {
+            return
+        }
+
         var seen = Set<String>()
-        var result: [AppEntry] = []
+        var rawItems: [(name: String, bundleID: String, url: URL, names: [String])] = []
 
         for root in roots {
             guard let children = try? FileManager.default.contentsOfDirectory(atPath: root) else { continue }
             for child in children.sorted() {
                 let fullPath = (root as NSString).appendingPathComponent(child)
                 if child.hasSuffix(".app") {
-                    appendEntry(at: fullPath, seen: &seen, into: &result)
+                    autoreleasepool {
+                        appendRaw(at: fullPath, seen: &seen, into: &rawItems)
+                    }
                 } else if !child.hasPrefix(".") {
                     // 一层子目录，例如 /System/Applications/Utilities
                     guard let inner = try? FileManager.default.contentsOfDirectory(atPath: fullPath) else { continue }
                     for item in inner.sorted() where item.hasSuffix(".app") {
-                        appendEntry(at: (fullPath as NSString).appendingPathComponent(item),
-                                    seen: &seen, into: &result)
+                        autoreleasepool {
+                            appendRaw(at: (fullPath as NSString).appendingPathComponent(item),
+                                      seen: &seen, into: &rawItems)
+                        }
                     }
                 }
             }
         }
 
+        // 只把所有程序名里出现的非多音字汉字一次性交给短命子进程转成拼音，
+        // 转换完即丢弃子进程，主进程不加载也不缓存整个 ICU 拼音表。
+        let extraReadings = resolveExtraPinyinReadings(for: rawItems.flatMap(\.names))
+
+        let result: [AppEntry] = rawItems.map { item in
+            var fulls: [String] = []
+            var initials: [String] = []
+            for candidate in item.names {
+                let pinyin = Pinyin.convert(candidate, extraReadings: extraReadings)
+                fulls += pinyin.fulls
+                initials += pinyin.initials
+            }
+            return AppEntry(name: item.name, bundleID: item.bundleID, url: item.url,
+                            alternateNames: Array(item.names.dropFirst()),
+                            pinyinFulls: fulls, pinyinInitials: initials)
+        }
+
         entries = result.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
+        lastScanDate = Date()
     }
 
-    private func appendEntry(at path: String, seen: inout Set<String>, into result: inout [AppEntry]) {
-        guard let entry = makeEntry(at: path), seen.insert(entry.bundleID).inserted else { return }
-        result.append(entry)
-    }
-
-    private func makeEntry(at path: String) -> AppEntry? {
+    private func appendRaw(
+        at path: String,
+        seen: inout Set<String>,
+        into result: inout [(name: String, bundleID: String, url: URL, names: [String])]
+    ) {
         let url = URL(fileURLWithPath: path)
         let bundle = Bundle(url: url)
         let info = bundle?.infoDictionary
 
         // CoreServices 里混着 Dock 这类后台组件，只收有界面的
         if path.contains("/CoreServices/"), (info?["LSUIElement"] as? Bool) == true {
-            return nil
+            return
         }
 
-        guard let bundleID = (info?["CFBundleIdentifier"] as? String) ?? bundle?.bundleIdentifier else {
-            return nil
+        guard let bundleID = (info?["CFBundleIdentifier"] as? String) ?? bundle?.bundleIdentifier,
+              seen.insert(bundleID).inserted else {
+            return
         }
         let name = (info?["CFBundleDisplayName"] as? String)
             ?? (info?["CFBundleName"] as? String)
@@ -107,17 +136,51 @@ final class AppIndex {
         if let alias = Self.chineseAliases[bundleID], alias != name {
             names.append(alias)
         }
+        result.append((name: name, bundleID: bundleID, url: url, names: names))
+    }
 
-        var fulls: [String] = []
-        var initials: [String] = []
-        for candidate in names {
-            let pinyin = Pinyin.convert(candidate)
-            fulls += pinyin.fulls
-            initials += pinyin.initials
+    private func resolveExtraPinyinReadings(for names: [String]) -> [Character: String] {
+        var uniqueChars = ""
+        var seenChars = Set<Character>()
+        for name in names {
+            for ch in name where !ch.isASCII && Polyphone.table[ch] == nil && seenChars.insert(ch).inserted {
+                uniqueChars.append(ch)
+            }
         }
-        return AppEntry(name: name, bundleID: bundleID, url: url,
-                        alternateNames: Array(names.dropFirst()),
-                        pinyinFulls: fulls, pinyinInitials: initials)
+        guard !uniqueChars.isEmpty,
+              let executable = Bundle.main.executablePath else { return [:] }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["--convert-pinyin"]
+        let inPipe = Pipe()
+        let outPipe = Pipe()
+        process.standardInput = inPipe
+        process.standardOutput = outPipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            if let inputData = uniqueChars.data(using: .utf8) {
+                inPipe.fileHandleForWriting.write(inputData)
+            }
+            try? inPipe.fileHandleForWriting.close()
+            let outputData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let dict = try JSONSerialization.jsonObject(with: outputData) as? [String: String] else {
+                return [:]
+            }
+            var result: [Character: String] = [:]
+            for (k, v) in dict {
+                if let ch = k.first {
+                    result[ch] = v
+                }
+            }
+            return result
+        } catch {
+            return [:]
+        }
     }
 
     /// 精确 > 前缀 > 包含 > 首字母缩写 > 字母子序列

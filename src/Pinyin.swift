@@ -82,7 +82,7 @@ enum Pinyin {
 
     private static let maxVariants = 24
 
-    static func convert(_ text: String) -> Result {
+    static func convert(_ text: String, extraReadings: [Character: String] = [:]) -> Result {
         var fullCombos = [""]
         var initialCombos = [""]
 
@@ -99,7 +99,7 @@ enum Pinyin {
             } else {
                 // 含汉字：逐字转，多音字产生分支
                 for character in piece {
-                    let readings = readingsOf(character)
+                    let readings = readingsOf(character, extraReadings: extraReadings)
                     guard !readings.isEmpty else { continue }
                     fullCombos = expand(fullCombos, with: readings)
                     initialCombos = expand(initialCombos, with: readings.compactMap { $0.first.map(String.init) })
@@ -111,6 +111,20 @@ enum Pinyin {
 
         return Result(fulls: fullCombos.filter { !$0.isEmpty },
                       initials: initialCombos.filter { !$0.isEmpty })
+    }
+
+    /// 供短命子进程（--convert-pinyin）批量转换汉字，避免主进程常驻加载 ICU 拼音表
+    static func batchConvertCharacters(_ text: String) -> [String: String] {
+        var map: [String: String] = [:]
+        for ch in text where !ch.isASCII && Polyphone.table[ch] == nil {
+            let key = String(ch)
+            guard map[key] == nil else { continue }
+            let latin = toLatin(key).filter { $0.isLetter }
+            if !latin.isEmpty {
+                map[key] = latin
+            }
+        }
+        return map
     }
 
     private static func expand(_ prefixes: [String], with options: [String]) -> [String] {
@@ -131,9 +145,14 @@ enum Pinyin {
         }
     }
 
-    private static func readingsOf(_ character: Character) -> [String] {
+    private static func readingsOf(
+        _ character: Character, extraReadings: [Character: String]
+    ) -> [String] {
         if let readings = Polyphone.table[character] {
             return readings
+        }
+        if let cached = extraReadings[character] {
+            return [cached]
         }
         if character.isASCII {
             if character.isLetter || character.isNumber {

@@ -4,6 +4,18 @@ import Carbon
 
 // 全局变量用于 Carbon 回调
 
+// 短命子进程模式：仅在后台扫描应用名时由主进程拉起，批量转换汉字后立刻退出，
+// 避免主进程常驻加载 ICU 中文拼音转换表。
+if CommandLine.arguments.contains("--convert-pinyin") {
+    let data = FileHandle.standardInput.readDataToEndOfFile()
+    let text = String(data: data, encoding: .utf8) ?? ""
+    let map = Pinyin.batchConvertCharacters(text)
+    if let json = try? JSONSerialization.data(withJSONObject: map) {
+        FileHandle.standardOutput.write(json)
+    }
+    exit(0)
+}
+
 // 调试用：跑一次搜索并打印结果
 if let flag = CommandLine.arguments.firstIndex(of: "--search"),
    flag + 1 < CommandLine.arguments.count {
@@ -74,12 +86,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 当前配置缓存。菜单开关状态从这里读，避免每次点菜单都读盘。
     private var config: TonyToyConfig = .default
 
-    /// 配置窗口。用 lazy 是为了不在启动时创建整套 AppKit 视图——
-    /// 大多数用户一次也不会打开设置，没必要为此拖慢冷启动。
-    private lazy var settingsWindowController = SettingsWindowController()
+    /// 配置窗口：按需创建，关闭窗口时释放视图树，减少空闲内存占用。
+    private var settingsWindowController: SettingsWindowController?
+    private var settingsCloseObserver: NSObjectProtocol?
 
-    /// 密码管理器的全局热键。⌘⇧V 写死是刻意的——
-    /// 配置项还在规划中，改键位前先保持既有行为。
+    /// 密码管理器的全局热键（Carbon，随配置热更新）
     private let passwordHotkey = CarbonHotkey(
         name: "密码管理器", signature: OSType.fourCharCode("TnyP"))
 
@@ -421,7 +432,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() {
-        settingsWindowController.showWindow(nil)
+        if settingsWindowController == nil {
+            let controller = SettingsWindowController()
+            settingsWindowController = controller
+            if let window = controller.window {
+                settingsCloseObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    if let observer = self?.settingsCloseObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                        self?.settingsCloseObserver = nil
+                    }
+                    self?.settingsWindowController = nil
+                }
+            }
+        }
+        settingsWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
