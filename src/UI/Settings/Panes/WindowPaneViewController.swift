@@ -2,7 +2,7 @@ import AppKit
 
 final class WindowPaneViewController: SettingsPaneViewController {
     init() {
-        super.init(title: "窗口", icon: "macwindow")
+        super.init(title: "窗口切换器", icon: "macwindow")
     }
 
     @available(*, unavailable)

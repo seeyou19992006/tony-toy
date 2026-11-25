@@ -64,10 +64,10 @@ final class SettingsWindowController: NSWindowController {
             SidebarItem(id: FeatureID.hotkeyLayer, title: "全局快捷键", icon: "command") {
                 HotkeyLayerPaneViewController()
             },
-            SidebarItem(id: FeatureID.mouseLayer, title: "鼠标", icon: "computermouse") {
+            SidebarItem(id: FeatureID.mouseLayer, title: "鼠标侧键层", icon: "computermouse") {
                 MousePaneViewController()
             },
-            SidebarItem(id: FeatureID.switcher, title: "窗口", icon: "macwindow") {
+            SidebarItem(id: FeatureID.switcher, title: "窗口切换器", icon: "macwindow") {
                 WindowPaneViewController()
             },
             SidebarItem(id: FeatureID.launcher, title: "启动器", icon: "magnifyingglass") {
@@ -76,7 +76,7 @@ final class SettingsWindowController: NSWindowController {
             SidebarItem(id: FeatureID.passwordVault, title: "密码管理器", icon: "lock") {
                 PasswordPaneViewController()
             },
-            SidebarItem(id: FeatureID.gamepad, title: "手柄", icon: "gamecontroller") {
+            SidebarItem(id: FeatureID.gamepad, title: "MacDeck 启动器", icon: "gamecontroller") {
                 GamepadPaneViewController()
             },
             SidebarItem(id: "about", title: "关于", icon: "info.circle") {
@@ -93,6 +93,8 @@ final class SettingsWindowController: NSWindowController {
         // 侧边栏
         let sidebarScroll = NSScrollView()
         sidebarScroll.hasVerticalScroller = true
+        sidebarScroll.autohidesScrollers = true
+        sidebarScroll.scrollerStyle = .overlay
         sidebarScroll.drawsBackground = false
         sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
 

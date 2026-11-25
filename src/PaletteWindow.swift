@@ -14,7 +14,8 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let tintView = AppearanceAwareTintView()
 
     private var results: [AppEntry] = []
-    private let pageSize = 8
+    private var pageSize = 8
+    private var showWindowlessApps = true
     private var currentPage = 0
     private var selectedIndex = 0
     private var iconCache: [String: NSImage] = [:]
@@ -26,7 +27,14 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     private let searchAreaHeight: CGFloat = 64
     private let rowHeight: CGFloat = 66
     private let listBottomPadding: CGFloat = 14
-    private let maxRows = 8
+
+    func configure(pageSize: Int, showWindowlessApps: Bool) {
+        self.pageSize = min(max(pageSize, 4), 12)
+        self.showWindowlessApps = showWindowlessApps
+        if isVisible {
+            refresh()
+        }
+    }
 
     private let selectionColor = NSColor(srgbRed: 0.13, green: 0.47, blue: 0.55, alpha: 1)
 
@@ -275,14 +283,23 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         runningBundleIDs = Set(WindowedApps.running().map(\.bundleID))
 
         if raw.isEmpty {
-            // 空输入：有窗口的在前，后台运行的殿后；都没有时退回完整列表
-            let defaults = WindowedApps.defaultEntries()
+            // 空输入：有窗口的在前，后台运行的殿后；关闭「显示无窗口应用」时仅展示有窗口应用
+            let defaults = showWindowlessApps
+                ? WindowedApps.defaultEntries()
+                : WindowedApps.current()
             results = defaults.isEmpty ? index.search("") : defaults
         } else if keyword.isEmpty {
             // 只输入空格：列出所有程序，这是默认窗口列表之外查看全部应用的入口
             results = index.search("")
         } else {
-            results = index.search(keyword, preferred: windowedBundleIDs)
+            let searched = index.search(keyword, preferred: windowedBundleIDs)
+            if showWindowlessApps {
+                results = searched
+            } else {
+                // 关闭「显示无窗口应用」时，有窗口或未运行的已安装应用仍保留，只过滤掉无窗口后台进程
+                let windowlessRunning = runningBundleIDs.subtracting(windowedBundleIDs)
+                results = searched.filter { !windowlessRunning.contains($0.bundleID) }
+            }
         }
         currentPage = 0
         selectedIndex = 0
@@ -407,15 +424,27 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         closePanel()
     }
 
-    /// ⌘1–⌘8：执行当前页对应项。
-    ///
-    /// 用 `performKeyEquivalent` 而不是 `keyDown`：带 ⌘ 的组合键会先走这里，
-    /// 而且是窗口级的，不依赖搜索框焦点。直接解析字符比维护键码映射表可靠。
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
+            closePanel()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    /// ⌘1–⌘9 与 Esc：窗口级快捷键处理，不依赖搜索框焦点。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           isVisible {
+            closePanel()
+            return true
+        }
         if event.modifierFlags.contains(.command),
             let chars = event.charactersIgnoringModifiers,
             let digit = Int(chars),
-            digit >= 1, digit <= pageSize, isVisible
+            digit >= 1, digit <= min(9, pageSize), isVisible
         {
             executePageRow(digit - 1)
             return true

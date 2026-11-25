@@ -12,6 +12,8 @@ final class LauncherController {
     /// 当前热键。启动时用 `LauncherSettings` 的旧预设兜底，
     /// 加载配置后由 `LauncherFeature.applyValues` 覆盖成 config.json 里的值。
     private(set) var hotkeySpec = LauncherSettings.selectedHotkey
+    private var pageSize = 8
+    private var showWindowlessApps = true
 
     /// 菜单栏显示用的热键标题（如 `⌥ D`）
     var hotkeyTitle: String { hotkeySpec.title }
@@ -27,12 +29,20 @@ final class LauncherController {
         index.scan()
         dbg("launcher scan done entries=\(index.entries.count)")
 
-        palette = PaletteWindow(index: index) { [weak self] entry in
+        let window = PaletteWindow(index: index) { [weak self] entry in
             self?.activator.activate(entry)
         }
-
+        window.configure(pageSize: pageSize, showWindowlessApps: showWindowlessApps)
+        palette = window
 
         registerHotkey()
+    }
+
+    func configure(pageSize: Int, pinyinMatch: Bool, showWindowlessApps: Bool) {
+        self.pageSize = min(max(pageSize, 4), 12)
+        self.showWindowlessApps = showWindowlessApps
+        index.pinyinMatchEnabled = pinyinMatch
+        palette?.configure(pageSize: self.pageSize, showWindowlessApps: showWindowlessApps)
     }
 
     /// 重新注册热键（改配置后调用）。

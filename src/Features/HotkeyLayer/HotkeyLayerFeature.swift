@@ -25,16 +25,8 @@ final class HotkeyLayerFeature: Feature {
     func start() { controller.setEnabled(true) }
     func stop() { controller.setEnabled(false) }
 
-    /// 映射表变更后需要重新读取配置文件。
-    ///
-    /// TODO: 依赖协调者为 `HotkeyMapperController` 增加 `func reload()`。
-    /// 当前控制器只在 `private func start()` 内部调用 `configStore.loadMappings()`，
-    /// 且 `start()` 会先 `stop()` 拆掉 tap 再重建——直接复用 `setEnabled(true)`
-    /// 来做重载会带来不必要的 tap 抖动，所以这里先留空，
-    /// 等控制器暴露轻量重载入口后再接。
+    /// 映射表变更后轻量重载（不拆掉 event tap）。
     func applyValues(_ config: FeatureConfig) {
-        // 映射表改了要重新加载——配置窗口保存后立即生效，不用重启。
-        // `reload()` 是轻量重载（只重读映射），不会拆掉 event tap。
         controller.reload()
     }
 }

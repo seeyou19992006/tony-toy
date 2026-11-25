@@ -30,38 +30,44 @@ final class AboutPaneViewController: SettingsPaneViewController {
 
         // MARK: 版本
 
-        contentStack.addArrangedSubview(makeSectionTitle("版本"))
-        contentStack.addArrangedSubview(
-            makeRow(title: "版本", control: makeValueLabel(Self.versionText)))
-        contentStack.addArrangedSubview(
-            makeRow(title: "配置版本", control: makeValueLabel(Self.configVersionText)))
+        let versionTitle = makeSectionTitle("版本")
+        contentStack.addArrangedSubview(versionTitle)
+        contentStack.setCustomSpacing(6, after: versionTitle)
+        addFullWidthSubview(makeGroupBox([
+            makeRow(title: "版本", control: makeValueLabel(Self.versionText)),
+            makeRow(title: "配置版本", control: makeValueLabel(Self.configVersionText)),
+        ]))
 
         // MARK: 权限
 
-        contentStack.addArrangedSubview(makeSectionTitle("权限"))
-        contentStack.addArrangedSubview(
+        let permissionTitle = makeSectionTitle("权限")
+        contentStack.addArrangedSubview(permissionTitle)
+        contentStack.setCustomSpacing(6, after: permissionTitle)
+        addFullWidthSubview(makeGroupBox([
             makeRow(
                 title: "辅助功能",
                 control: makePermissionControl(
                     statusLabel: accessibilityStatusLabel,
-                    action: #selector(openAccessibilitySettings))))
-        contentStack.addArrangedSubview(
+                    action: #selector(openAccessibilitySettings))),
             makeRow(
                 title: "输入监控",
                 control: makePermissionControl(
                     statusLabel: inputMonitoringStatusLabel,
-                    action: #selector(openInputMonitoringSettings))))
-        contentStack.addArrangedSubview(
-            makePlaceholder("授权后状态可能不会立即变化，可点击「重新检查权限」或重启应用。"))
+                    action: #selector(openInputMonitoringSettings))),
+        ]))
+        let permissionNote = makePlaceholder("授权后状态可能不会立即变化，可点击「重新检查权限」或重启应用。")
+        addFullWidthSubview(permissionNote)
 
         updatePermissionLabels()
 
         // MARK: 诊断
 
-        contentStack.addArrangedSubview(makeSectionTitle("诊断"))
-        contentStack.addArrangedSubview(makeDiagnosticButtons())
-        contentStack.addArrangedSubview(
-            makePlaceholder("调试日志仅在带 --debug 参数启动时生成；日志路径为 /tmp/launcher-debug.log。"))
+        let diagTitle = makeSectionTitle("诊断")
+        contentStack.addArrangedSubview(diagTitle)
+        contentStack.setCustomSpacing(6, after: diagTitle)
+        addFullWidthSubview(makeDiagnosticButtons())
+        let diagNote = makePlaceholder("调试日志仅在带 --debug 参数启动时生成；日志路径为 /tmp/launcher-debug.log。")
+        addFullWidthSubview(diagNote)
     }
 
     // MARK: - 版本信息
@@ -75,10 +81,16 @@ final class AboutPaneViewController: SettingsPaneViewController {
     private static var versionText: String {
         let name = stringValue(for: "CFBundleName") ?? "TonyToy"
         let shortVersion = stringValue(for: "CFBundleShortVersionString") ?? "未知"
+        let base: String
         if let build = stringValue(for: "CFBundleVersion") {
-            return "\(name) v\(shortVersion) (\(build))"
+            base = "\(name) v\(shortVersion) (\(build))"
+        } else {
+            base = "\(name) v\(shortVersion)"
         }
-        return "\(name) v\(shortVersion)"
+        if let buildTime = stringValue(for: "TonyToyBuildTime") {
+            return "\(base) · \(buildTime)"
+        }
+        return base
     }
 
     /// 从配置里读版本号。配置不存在时 `load()` 返回默认值（当前为 v1），

@@ -89,7 +89,6 @@ enum LoginItemManager {
 final class GeneralPaneViewController: SettingsPaneViewController {
     private lazy var themePopUpButton = NSPopUpButton()
     private lazy var launchAtLoginSwitch = NSSwitch()
-    private lazy var menuBarIconSwitch = NSSwitch()
 
     init() {
         super.init(title: "通用", icon: "gearshape")
@@ -103,10 +102,15 @@ final class GeneralPaneViewController: SettingsPaneViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        themePopUpButton.controlSize = .small
+        launchAtLoginSwitch.controlSize = .small
+
         contentStack.addArrangedSubview(makeSectionTitle("全局行为"))
-        contentStack.addArrangedSubview(makeRow(title: "主题", control: themePopUpButton))
-        contentStack.addArrangedSubview(makeRow(title: "开机自启", control: launchAtLoginSwitch))
-        contentStack.addArrangedSubview(makeRow(title: "菜单栏图标", control: menuBarIconSwitch))
+        contentStack.setCustomSpacing(6, after: contentStack.arrangedSubviews.last!)
+        addFullWidthSubview(makeGroupBox([
+            makeRow(title: "主题", control: themePopUpButton),
+            makeRow(title: "开机自启", control: launchAtLoginSwitch),
+        ]))
 
         configureControls()
     }
@@ -130,10 +134,6 @@ final class GeneralPaneViewController: SettingsPaneViewController {
         launchAtLoginSwitch.state = LoginItemManager.isEnabled ? .on : .off
         launchAtLoginSwitch.target = self
         launchAtLoginSwitch.action = #selector(launchAtLoginDidChange(_:))
-
-        menuBarIconSwitch.state = general.showMenuBarIcon ? .on : .off
-        menuBarIconSwitch.target = self
-        menuBarIconSwitch.action = #selector(menuBarIconDidChange(_:))
     }
 
     // MARK: - 交互
@@ -157,14 +157,6 @@ final class GeneralPaneViewController: SettingsPaneViewController {
             LoginItemManager.setEnabled(!wantsEnabled)
             sender.state = wantsEnabled ? .off : .on
             return
-        }
-    }
-
-    @objc private func menuBarIconDidChange(_ sender: NSSwitch) {
-        let visible = sender.state == .on
-        // 实际隐藏/显示由 `main.swift` 的托盘菜单接线负责，本 Pane 只持久化偏好
-        if !persist({ $0.showMenuBarIcon = visible }) {
-            sender.state = visible ? .off : .on
         }
     }
 

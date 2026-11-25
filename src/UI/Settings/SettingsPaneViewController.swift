@@ -19,6 +19,10 @@ class SettingsPaneViewController: NSViewController {
     let paneTitle: String
     let paneIcon: String
 
+    private let scrollView = NSScrollView()
+    private let documentView = FlippedDocumentView()
+    private var contentBottomConstraint: NSLayoutConstraint?
+
     /// 纵向内容栈，子类往里加视图
     private(set) lazy var contentStack: NSStackView = {
         let stack = NSStackView()
@@ -44,20 +48,24 @@ class SettingsPaneViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // NSScrollView 的 documentView 需要有明确尺寸，
         // 用容器 + 四边约束把 contentStack 撑开，滚动范围才正确。
         // 容器必须翻转（见 FlippedDocumentView），否则内容会贴底。
-        let documentView = FlippedDocumentView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(contentStack)
         scrollView.documentView = documentView
 
         container.addSubview(scrollView)
+
+        let bottomConstraint = contentStack.bottomAnchor.constraint(
+            lessThanOrEqualTo: documentView.bottomAnchor)
+        contentBottomConstraint = bottomConstraint
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: container.topAnchor),
@@ -69,17 +77,76 @@ class SettingsPaneViewController: NSViewController {
             // 滚动条」时 clipView 比 scrollView 窄 17pt，用 scrollView 会让
             // documentView 右侧 17pt 落到滚动条下面，最小窗口时控件被裁。
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(
+                greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
 
             contentStack.topAnchor.constraint(equalTo: documentView.topAnchor),
             contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
             contentStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            bottomConstraint,
         ])
 
         view = container
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let header = NSTextField(labelWithString: paneTitle)
+        header.font = .systemFont(ofSize: 18, weight: .bold)
+        contentStack.addArrangedSubview(header)
+        contentStack.setCustomSpacing(16, after: header)
+    }
+
     // MARK: - 行构造
+
+    /// 将多行设置项装进统一风格的分组卡片（自动加行间分隔线并撑满内容区宽度）
+    func makeGroupBox(_ rows: [NSView]) -> NSView {
+        let box = NSBox()
+        box.boxType = .primary
+        box.titlePosition = .noTitle
+        box.contentViewMargins = .zero
+        box.translatesAutoresizingMaskIntoConstraints = false
+
+        let inner = NSStackView()
+        inner.orientation = .vertical
+        inner.alignment = .leading
+        inner.spacing = 0
+        inner.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, row) in rows.enumerated() {
+            row.translatesAutoresizingMaskIntoConstraints = false
+            inner.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: inner.widthAnchor).isActive = true
+
+            if index < rows.count - 1 {
+                let divider = NSBox()
+                divider.boxType = .separator
+                divider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                inner.addArrangedSubview(divider)
+                divider.widthAnchor.constraint(equalTo: inner.widthAnchor).isActive = true
+            }
+        }
+
+        if let contentView = box.contentView {
+            contentView.addSubview(inner)
+            NSLayoutConstraint.activate([
+                inner.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+                inner.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+                inner.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
+                inner.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
+            ])
+        }
+
+        return box
+    }
+
+    /// 添加撑满内容区宽度的子视图（排除左右 24pt 内边距）
+    func addFullWidthSubview(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -48).isActive = true
+    }
 
     /// 统一的「左标题 + 右控件」行
     func makeRow(title: String, control: NSView) -> NSView {
@@ -93,9 +160,9 @@ class SettingsPaneViewController: NSViewController {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
+        row.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         row.translatesAutoresizingMaskIntoConstraints = false
-        // 不设宽度下限：窗口 minSize 已保证内容区最小 391pt，
-        // 硬编码 400 会在最小窗口下把右边距从 24 压到 15。
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
         return row
     }
 
@@ -128,10 +195,33 @@ extension SettingsPaneViewController {
         let config = (try? ConfigStore.shared.load()) ?? .default
         let featureConfig = config.features[feature.id] ?? FeatureConfig()
 
+        var pendingRows: [NSView] = []
+        func flushPendingRows() {
+            guard !pendingRows.isEmpty else { return }
+            addFullWidthSubview(makeGroupBox(pendingRows))
+            pendingRows.removeAll()
+        }
+
+        var hasTable = false
         for item in feature.settings {
-            if let row = makeRow(for: item, feature: feature, featureConfig: featureConfig) {
-                contentStack.addArrangedSubview(row)
+            if case .table(_, let title) = item {
+                flushPendingRows()
+                hasTable = true
+                let tableSection = makeTableRow(
+                    title: title, feature: feature, featureConfig: featureConfig)
+                tableSection.setContentHuggingPriority(.defaultLow, for: .vertical)
+                addFullWidthSubview(tableSection)
+            } else if let row = makeRow(for: item, feature: feature, featureConfig: featureConfig) {
+                pendingRows.append(row)
             }
+        }
+        flushPendingRows()
+
+        if hasTable {
+            contentBottomConstraint?.isActive = false
+            let exactBottom = contentStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor)
+            exactBottom.isActive = true
+            contentBottomConstraint = exactBottom
         }
     }
 
@@ -308,6 +398,8 @@ extension SettingsPaneViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        editor.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 

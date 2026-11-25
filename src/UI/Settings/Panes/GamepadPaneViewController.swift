@@ -2,7 +2,7 @@ import AppKit
 
 final class GamepadPaneViewController: SettingsPaneViewController {
     init() {
-        super.init(title: "手柄", icon: "gamecontroller")
+        super.init(title: "MacDeck 启动器", icon: "gamecontroller")
     }
 
     @available(*, unavailable)

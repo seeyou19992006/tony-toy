@@ -40,6 +40,8 @@ collect_source_files() {
 }
 
 write_info_plist() {
+    local build_time
+    build_time="$(date '+%Y-%m-%d %H:%M:%S')"
     cat > "$APP_CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -57,6 +59,8 @@ write_info_plist() {
     <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
     <string>$APP_BUILD</string>
+    <key>TonyToyBuildTime</key>
+    <string>$build_time</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>

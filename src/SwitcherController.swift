@@ -58,17 +58,16 @@ final class SwitcherController {
     private var cols = 1
     private var isShown = false
 
-    /// 切换器最大行数（配置项，默认 3）。
-    /// 网格按「竖向 x 行、横向 x+2 列」算，x 不超过这个上限。
-    var maxRows = 3
-
     /// 切换后是否把鼠标移到目标窗口中心（配置项，默认关闭）。
     var mouseFollow = false
 
+    /// 是否显示无窗口应用（配置项，默认开启）。
+    var showWindowlessApps = true
+
     /// 应用配置（配置窗口改了设置后调用，下次弹出生效）
-    func configure(maxRows: Int, mouseFollow: Bool) {
-        self.maxRows = min(max(1, maxRows), 5)
+    func configure(mouseFollow: Bool, showWindowlessApps: Bool) {
         self.mouseFollow = mouseFollow
+        self.showWindowlessApps = showWindowlessApps
     }
 
     private let activator = Activator()
@@ -83,8 +82,22 @@ final class SwitcherController {
     /// 用户可能通过点击等方式切换焦点，MRU 必须以此为准，否则默认选中会和实际窗口不一致。
     private static func frontmostWindowIdentity() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication,
-              app.activationPolicy == .regular,
               let bundleID = app.bundleIdentifier else { return nil }
+        let selfPID = ProcessInfo.processInfo.processIdentifier
+        guard app.activationPolicy == .regular || app.processIdentifier == selfPID else {
+            return nil
+        }
+
+        let appName = app.localizedName ?? ""
+        if app.processIdentifier == selfPID {
+            guard let window = NSApp.keyWindow ?? NSApp.mainWindow
+                    ?? NSApp.windows.first(where: { $0.isVisible && $0.level == .normal }) else {
+                return nil
+            }
+            let rawTitle = window.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = SwitcherItem.sanitize(title: rawTitle, appName: appName)
+            return "\(bundleID)|\(title)"
+        }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.25)
@@ -96,9 +109,7 @@ final class SwitcherController {
         var titleValue: CFTypeRef?
         AXUIElementCopyAttributeValue(raw as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
         let rawTitle = (titleValue as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let appName = app.localizedName ?? ""
-        let title = SwitcherItem.sanitize(title: rawTitle.isEmpty ? "未命名窗口" : rawTitle,
-                                          appName: appName)
+        let title = SwitcherItem.sanitize(title: rawTitle, appName: appName)
         return "\(bundleID)|\(title)"
     }
 
@@ -118,10 +129,10 @@ final class SwitcherController {
     // MARK: - 展示
 
     func show() {
-        items = Self.buildItems()
+        items = Self.buildItems(showWindowlessApps: showWindowlessApps)
         guard !items.isEmpty else { return }
 
-        (rows, cols) = Self.grid(for: items.count, maxRows: maxRows)
+        (rows, cols) = Self.grid(for: items.count)
         // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
         selected = items.count > 1 ? 1 : 0
         isShown = true
@@ -145,14 +156,18 @@ final class SwitcherController {
         windows.removeAll()
     }
 
-    /// 竖向 x 行、横向 x+2 列，取最小的 x 容纳全部磁贴
-    static func grid(for count: Int, maxRows: Int = 3) -> (rows: Int, cols: Int) {
+    /// 按固定区间决定行数，再按总数向上取整计算列数：
+    /// 1-4 -> 1*x，5-10 -> 2*x，11-19 -> 3*x，20+ -> 4*x
+    static func grid(for count: Int) -> (rows: Int, cols: Int) {
         guard count > 0 else { return (1, 3) }
-        var x = 1
-        while x * (x + 2) < count { x += 1 }
-        // 行数不能超过配置上限，超了就把列数补回来
-        x = min(x, max(1, maxRows))
-        let cols = (count + x - 1) / x
+        let targetRows: Int
+        switch count {
+        case 1...4: targetRows = 1
+        case 5...10: targetRows = 2
+        case 11...19: targetRows = 3
+        default: targetRows = 4
+        }
+        let cols = (count + targetRows - 1) / targetRows
         let rows = (count + cols - 1) / cols
         return (rows, cols)
     }
@@ -245,6 +260,24 @@ final class SwitcherController {
         // 鼠标跟随是切换器的配置项，不再读全局 UserDefaults
         Activator.mouseFollowEnabled = mouseFollow
 
+        if target.entry.bundleID == Bundle.main.bundleIdentifier {
+            let targetTitle = target.windowTitle
+            let match = NSApp.windows.first(where: { win in
+                guard win.level == .normal, win.styleMask.contains(.titled),
+                      win.isVisible || win.isMiniaturized else { return false }
+                let sanitized = SwitcherItem.sanitize(
+                    title: win.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                    appName: target.entry.name)
+                return targetTitle == nil || sanitized == targetTitle
+            })
+            if let match {
+                if match.isMiniaturized { match.deminiaturize(nil) }
+                NSApp.activate(ignoringOtherApps: true)
+                match.makeKeyAndOrderFront(nil)
+            }
+            return
+        }
+
         guard let element = target.window else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
             AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
@@ -274,28 +307,57 @@ final class SwitcherController {
     // MARK: - 数据
 
     /// 正在运行的应用；多窗口应用展开成多个窗口项
-    private static func buildItems() -> [SwitcherItem] {
+    private static func buildItems(showWindowlessApps: Bool) -> [SwitcherItem] {
         let windowed = WindowedApps.current()
         let windowedIDs = Set(windowed.map(\.bundleID))
-        let background = WindowedApps.running()
-            .filter { !windowedIDs.contains($0.bundleID) }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let background = showWindowlessApps
+            ? WindowedApps.running()
+                .filter { !windowedIDs.contains($0.bundleID) }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            : []
 
         var items: [SwitcherItem] = []
 
+        let selfPID = ProcessInfo.processInfo.processIdentifier
         for entry in windowed + background {
             guard let app = NSRunningApplication
                 .runningApplications(withBundleIdentifier: entry.bundleID).first else {
-                items.append(SwitcherItem(entry: entry, window: nil,
-                                          windowTitle: nil, hasWindow: false))
+                if showWindowlessApps {
+                    items.append(SwitcherItem(entry: entry, window: nil,
+                                              windowTitle: nil, hasWindow: false))
+                }
+                continue
+            }
+
+            if app.processIdentifier == selfPID {
+                // 避免在主线程对自己发 AX IPC 导致阻塞，直接读 NSApp.windows
+                let ownWindows = NSApp.windows.filter {
+                    $0.level == .normal && $0.styleMask.contains(.titled)
+                        && ($0.isVisible || $0.isMiniaturized)
+                        && $0.frame.width > 1 && $0.frame.height > 1
+                }
+                for win in ownWindows {
+                    let rawTitle = win.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let title = SwitcherItem.sanitize(title: rawTitle, appName: entry.name)
+                    items.append(SwitcherItem(entry: entry, window: nil,
+                                              windowTitle: title, hasWindow: true))
+                }
                 continue
             }
 
             let windows = WindowEnumerator.standardWindows(of: app.processIdentifier)
 
             if windows.isEmpty {
-                items.append(SwitcherItem(entry: entry, window: nil,
-                                          windowTitle: nil, hasWindow: false))
+                // 原生全屏或在其他 Space 的窗口不在 AX 当前 Space 列表里，
+                // 直接复用 WindowedApps.current() 的结果，避免重复扫描全量窗口列表。
+                let hasOtherSpaceWindow = windowedIDs.contains(entry.bundleID)
+                if hasOtherSpaceWindow {
+                    items.append(SwitcherItem(entry: entry, window: nil,
+                                              windowTitle: nil, hasWindow: true))
+                } else if showWindowlessApps {
+                    items.append(SwitcherItem(entry: entry, window: nil,
+                                              windowTitle: nil, hasWindow: false))
+                }
             } else {
                 // 平铺：每个窗口一个磁贴
                 for info in windows {
@@ -312,9 +374,19 @@ final class SwitcherController {
             mruOrder.insert(front, at: 0)
         }
 
-        // 清掉已经不存在的窗口，避免占用名次
+        // 清掉已经不存在的窗口，避免占用名次；
+        // 对位于其他 Space 的应用（AX 取不到标题，windowTitle == nil），保留其既有 MRU 记录。
         let existing = Set(items.map(\.identity))
-        mruOrder = mruOrder.filter { existing.contains($0) }
+        let offscreenBundleIDs = Set(
+            items.filter { $0.hasWindow && $0.windowTitle == nil }.map(\.entry.bundleID)
+        )
+        mruOrder = mruOrder.filter { key in
+            if existing.contains(key) { return true }
+            if let sep = key.firstIndex(of: "|") {
+                return offscreenBundleIDs.contains(String(key[..<sep]))
+            }
+            return false
+        }
 
         // 无窗口的应用始终排在末尾：窗口列表来自 AX，
         // 而 CGWindowList 可能把只剩隐藏窗口的应用算作「有窗口」，导致它混在中间
@@ -331,13 +403,26 @@ final class SwitcherController {
         guard !mruOrder.isEmpty else { return items }
 
         var rank: [String: Int] = [:]
+        var bundleBestRank: [String: Int] = [:]
         for (index, key) in mruOrder.enumerated() {
             rank[key] = index
+            if let sep = key.firstIndex(of: "|") {
+                let bundleID = String(key[..<sep])
+                if bundleBestRank[bundleID] == nil {
+                    bundleBestRank[bundleID] = index
+                }
+            }
         }
 
         return items.enumerated().sorted { left, right in
-            let leftRank = rank[left.element.identity] ?? Int.max
-            let rightRank = rank[right.element.identity] ?? Int.max
+            let leftRank = rank[left.element.identity]
+                ?? (left.element.hasWindow && left.element.windowTitle == nil
+                    ? bundleBestRank[left.element.entry.bundleID] : nil)
+                ?? Int.max
+            let rightRank = rank[right.element.identity]
+                ?? (right.element.hasWindow && right.element.windowTitle == nil
+                    ? bundleBestRank[right.element.entry.bundleID] : nil)
+                ?? Int.max
             if leftRank != rightRank { return leftRank < rightRank }
             return left.offset < right.offset
         }.map(\.element)

@@ -21,7 +21,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--open"),
    flag + 1 < CommandLine.arguments.count,
    let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: CommandLine.arguments[flag + 1]) {
     let bundleID = CommandLine.arguments[flag + 1]
-    Activator().activate(AppEntry(name: bundleID, bundleID: bundleID, url: url))
+    let activator = Activator()
+    activator.activate(AppEntry(name: bundleID, bundleID: bundleID, url: url))
     RunLoop.main.run(until: Date().addingTimeInterval(2.5))
     exit(0)
 }
@@ -128,6 +129,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkAccessibility()
 
         NSApp.setActivationPolicy(.accessory)
+        setupMainMenu()
 
         // 2. 注册所有功能。顺序即侧边栏显示顺序。
         registerFeatures()
@@ -181,13 +183,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // 7. 密码管理器的全局热键（Carbon，与 Feature 的启停无关）
-        //    ⌘⇧V：keyCode 9 是 V 键
+        // 7. 密码管理器的全局热键（Carbon，随配置热更新）
         passwordHotkey.onTrigger = { [weak self] in
             self?.showPasswordManager()
         }
+        passwordFeature?.onHotkeyChanged = { [weak self] spec in
+            self?.passwordHotkey.register(keyCode: spec.keyCode, modifiers: spec.modifiers)
+        }
+        let pwdSpec = passwordFeature?.currentHotkeySpec
         passwordHotkey.register(
-            keyCode: 9, modifiers: UInt32(cmdKey) | UInt32(shiftKey))
+            keyCode: pwdSpec?.keyCode ?? 9,
+            modifiers: pwdSpec?.modifiers ?? (UInt32(cmdKey) | UInt32(shiftKey)))
 
         // 8. 后台预热，避免首次 ⌘Tab 才建立 AX 连接和读取图标
         Prewarmer.start()
@@ -246,13 +252,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item)
     }
 
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "设置", action: #selector(showSettings), keyEquivalent: ","))
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(NSMenuItem(title: "退出 TonyToy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(NSMenuItem(title: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
     private func buildMenu() {
         let menu = NSMenu()
 
         // MARK: 标题
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1"
-        let versionItem = NSMenuItem(title: "TonyToy v\(version)", action: nil, keyEquivalent: "")
+        let buildTime = (Bundle.main.infoDictionary?["TonyToyBuildTime"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let versionTitle = (buildTime?.isEmpty == false)
+            ? "TonyToy v\(version) · \(buildTime!)"
+            : "TonyToy v\(version)"
+        let versionItem = NSMenuItem(title: versionTitle, action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
 
@@ -272,18 +323,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // MARK: 功能总开关
         //
         // 只放「启用/禁用某个功能」这一层。功能内部的子选项
-        // （如切换器行数、鼠标跟随、启动器每页项数）统一在设置窗口里管，
+        // （如鼠标跟随、启动器每页项数）统一在设置窗口里管，
         // 避免托盘菜单变成无底洞。
 
         addToggle(to: menu, title: "鼠标侧键层", featureID: FeatureID.mouseLayer,
                   action: #selector(toggleVolume))
         addToggle(to: menu, title: "Caps 键层", featureID: FeatureID.capsLayer,
                   action: #selector(toggleCaps))
-        addToggle(to: menu, title: "全局快捷键层", featureID: FeatureID.hotkeyLayer,
+        addToggle(to: menu, title: "全局快捷键", featureID: FeatureID.hotkeyLayer,
                   action: #selector(toggleHotkeys))
-        addToggle(to: menu, title: "⌘Tab 接管", featureID: FeatureID.switcher,
+        addToggle(to: menu, title: "窗口切换器", featureID: FeatureID.switcher,
                   action: #selector(toggleCmdTab))
-        addToggle(to: menu, title: "Switch Home 拉起 MacDeck", featureID: FeatureID.gamepad,
+        addToggle(to: menu, title: "MacDeck 启动器", featureID: FeatureID.gamepad,
                   action: #selector(toggleGamepadHome))
 
         menu.addItem(NSMenuItem.separator())
@@ -306,8 +357,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             systemSymbolName: "magnifyingglass", accessibilityDescription: "应用启动器")
         menu.addItem(launcherItem)
 
+        let pwdHotkey = passwordFeature?.hotkeyTitle ?? "⌘⇧V"
         let pwdItem = NSMenuItem(
-            title: "密码管理器 (⌘⇧V)", action: #selector(showPasswordManager), keyEquivalent: "")
+            title: "密码管理器 (\(pwdHotkey))", action: #selector(showPasswordManager), keyEquivalent: "")
         pwdItem.image = NSImage(
             systemSymbolName: "lock", accessibilityDescription: "密码管理器")
         menu.addItem(pwdItem)

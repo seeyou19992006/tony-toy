@@ -67,8 +67,7 @@ final class MappingTableEditor: NSView {
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
-    private let addButton = NSButton()
-    private let removeButton = NSButton()
+    private let actionControl = NSSegmentedControl()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "还没有映射，点 ＋ 添加")
 
     // MARK: - 行模型
@@ -91,27 +90,36 @@ final class MappingTableEditor: NSView {
         tableView.dataSource = self
         tableView.delegate = self
         tableView.headerView = NSTableHeaderView()
-        tableView.rowHeight = 26
+        tableView.rowHeight = 28
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsEmptySelection = true
         tableView.allowsMultipleSelection = false
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.target = self
         tableView.doubleAction = #selector(editSelectedRow)
 
         let sourceColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("source"))
         sourceColumn.title = "来源"
-        sourceColumn.width = 150
+        sourceColumn.width = 160
         sourceColumn.minWidth = 100
+        sourceColumn.resizingMask = .autoresizingMask
         let targetColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("target"))
         targetColumn.title = "目标"
-        targetColumn.width = 220
+        targetColumn.width = 260
         targetColumn.minWidth = 120
+        targetColumn.resizingMask = .autoresizingMask
         tableView.addTableColumn(sourceColumn)
         tableView.addTableColumn(targetColumn)
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.borderType = .noBorder
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = 8
+        scrollView.layer?.borderWidth = 1
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
@@ -121,25 +129,26 @@ final class MappingTableEditor: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyLabel)
 
-        addButton.title = "＋"
-        addButton.bezelStyle = .smallSquare
-        addButton.setButtonType(.momentaryPushIn)
-        addButton.font = .systemFont(ofSize: 13, weight: .semibold)
-        addButton.target = self
-        addButton.action = #selector(addTapped)
-        addButton.toolTip = "添加映射"
-
-        removeButton.title = "－"
-        removeButton.bezelStyle = .smallSquare
-        removeButton.setButtonType(.momentaryPushIn)
-        removeButton.font = .systemFont(ofSize: 13, weight: .semibold)
-        removeButton.target = self
-        removeButton.action = #selector(removeTapped)
-        removeButton.toolTip = "删除选中的映射"
+        actionControl.segmentCount = 2
+        actionControl.trackingMode = .momentary
+        actionControl.segmentStyle = .automatic
+        actionControl.controlSize = .small
+        actionControl.setImage(
+            NSImage(systemSymbolName: "plus", accessibilityDescription: "添加映射"),
+            forSegment: 0)
+        actionControl.setImage(
+            NSImage(systemSymbolName: "minus", accessibilityDescription: "删除选中的映射"),
+            forSegment: 1)
+        actionControl.setWidth(28, forSegment: 0)
+        actionControl.setWidth(28, forSegment: 1)
+        actionControl.setToolTip("添加映射", forSegment: 0)
+        actionControl.setToolTip("删除选中的映射", forSegment: 1)
+        actionControl.target = self
+        actionControl.action = #selector(actionSegmentTapped(_:))
 
         let footerSpacer = NSView()
         footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let footer = NSStackView(views: [addButton, removeButton, footerSpacer])
+        let footer = NSStackView(views: [actionControl, footerSpacer])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 6
@@ -152,14 +161,11 @@ final class MappingTableEditor: NSView {
         hint.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hint)
 
-        addButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        removeButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
-
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
 
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
@@ -174,10 +180,23 @@ final class MappingTableEditor: NSView {
             hint.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
             hint.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 380, height: 240)
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
+        tableView.sizeToFit()
     }
 
     // MARK: - 数据
@@ -185,7 +204,7 @@ final class MappingTableEditor: NSView {
     private func reloadRows() {
         rows = rawMappings.map(parseRow)
         emptyLabel.isHidden = !rows.isEmpty
-        removeButton.isEnabled = !rows.isEmpty
+        actionControl.setEnabled(!rows.isEmpty, forSegment: 1)
         tableView.reloadData()
     }
 
@@ -281,6 +300,14 @@ final class MappingTableEditor: NSView {
     }
 
     // MARK: - 按钮动作
+
+    @objc private func actionSegmentTapped(_ sender: NSSegmentedControl) {
+        switch sender.selectedSegment {
+        case 0: addTapped()
+        case 1: removeTapped()
+        default: break
+        }
+    }
 
     @objc private func addTapped() {
         presentEditor(existing: nil, rowIndex: nil)

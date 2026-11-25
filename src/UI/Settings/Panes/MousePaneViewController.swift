@@ -2,7 +2,7 @@ import AppKit
 
 final class MousePaneViewController: SettingsPaneViewController {
     init() {
-        super.init(title: "鼠标", icon: "computermouse")
+        super.init(title: "鼠标侧键层", icon: "computermouse")
     }
 
     @available(*, unavailable)

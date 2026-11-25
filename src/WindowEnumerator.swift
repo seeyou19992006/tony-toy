@@ -49,7 +49,7 @@ enum WindowEnumerator {
             let minimized = (array[2] as? Bool) ?? false
 
             result.append(SwitchWindowInfo(element: element,
-                                           title: rawTitle.isEmpty ? "未命名窗口" : rawTitle,
+                                           title: rawTitle,
                                            minimized: minimized))
         }
 

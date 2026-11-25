@@ -4,10 +4,13 @@ import Carbon
 
 /// 密码粘贴服务 - 复制到剪贴板并模拟 Cmd+V
 class PasswordPaster {
+    /// 复制密码后延迟清除剪贴板的秒数（由 PasswordVaultFeature 同步配置）
+    static var clearDelaySeconds: TimeInterval = 30
+    private static var clearGeneration: UInt64 = 0
+
     /// 复制密码到剪贴板并自动粘贴
     static func paste(password: String) {
         let pasteboard = NSPasteboard.general
-        let oldContents = pasteboard.string(forType: .string)
 
         // 写入密码
         pasteboard.clearContents()
@@ -16,11 +19,14 @@ class PasswordPaster {
         // 模拟 Cmd+V
         simulateCmdV()
 
-        // 延迟后恢复原剪贴板
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let old = oldContents {
+        // 延迟清除剪贴板：仅当剪贴板内容仍是本次写入的密码时才清空，避免误删用户后续复制的内容
+        clearGeneration &+= 1
+        let generation = clearGeneration
+        let delay = max(1, clearDelaySeconds)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard clearGeneration == generation else { return }
+            if pasteboard.string(forType: .string) == password {
                 pasteboard.clearContents()
-                pasteboard.setString(old, forType: .string)
             }
         }
     }

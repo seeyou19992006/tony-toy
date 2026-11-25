@@ -58,23 +58,35 @@ final class LauncherFeature: Feature {
         dbg("启动器收到停止请求，但 LauncherController 缺少 stop()/setEnabled()，未执行")
     }
 
-    /// 呼出快捷键 / 每页项数 / 拼音匹配 / 显示无窗口应用都要运行时接口。
-    ///
-    /// TODO: 依赖协调者为启动器补应用接口。现状缺口：
-    /// - 热键：只能通过 `LauncherSettings.selectedHotkeyIndex` 从 5 个预设里选，
-    ///   拿不到 `HotkeyKeySpec` 的任意键名，且改完需要重新注册；
-    /// - `PaletteWindow.pageSize` / `maxRows` 是 private `let 8`，无法改；
-    /// - 拼音匹配在 `AppIndex.search` 里是写死的，没有开关；
-    /// - “显示无窗口应用”目前没有对应过滤逻辑，只有状态标记。
     /// 菜单栏显示用的热键标题（如 `⌥ D`）
     var hotkeyTitle: String { controller.hotkeyTitle }
 
-    /// 从配置应用设置。
-    ///
-    /// 目前只有热键需要真正生效——其余三项（每页项数、拼音匹配、
-    /// 无窗口应用）还需要 `PaletteWindow` / `AppIndex` 暴露接口，
-    /// 等那两处改完再补（TODO 在各自的 setter 上）。
+    /// 从配置应用启动器全部设置（热键 / 每页项数 / 拼音匹配 / 显示无窗口应用）。
     func applyValues(_ config: FeatureConfig) {
+        let pageSize: Int
+        if case .int(let value)? = config.values["pageSize"] {
+            pageSize = min(max(value, 4), 12)
+        } else {
+            pageSize = 8
+        }
+        let pinyinMatch: Bool
+        if case .bool(let value)? = config.values["pinyinMatch"] {
+            pinyinMatch = value
+        } else {
+            pinyinMatch = true
+        }
+        let showWindowlessApps: Bool
+        if case .bool(let value)? = config.values["showWindowlessApps"] {
+            showWindowlessApps = value
+        } else {
+            showWindowlessApps = true
+        }
+        controller.configure(
+            pageSize: pageSize,
+            pinyinMatch: pinyinMatch,
+            showWindowlessApps: showWindowlessApps
+        )
+
         guard let keySpec = SettingsPaneViewController.decodeHotkey(config.values["hotkey"])
         else { return }
 

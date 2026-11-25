@@ -37,18 +37,31 @@ final class PasswordVaultFeature: Feature {
     /// 各自持有一份 `VaultService`，会同时读写同一个 `vault.jsonl`。
     private var window: PasswordManagerWindow?
 
-    /// 已应用的配置值，供整合后的热键注册 / 自动锁定定时器使用。
+    /// 已应用的配置值。
     private(set) var hotkey = HotkeyKeySpec(key: "v", modifiers: ["command", "shift"])
     private(set) var autoLockMinutes = 5
     private(set) var clipboardClearSeconds = 30
+    private var autoLockTimer: Timer?
 
-    /// 窗口功能没有需要常驻的启动动作（热键由 Carbon 全局注册，
-    /// 现在仍留在 `main.swift` 的 `registerPasswordManagerHotkey()` 里）。
+    /// 呼出热键变更回调（供 main.swift 重新注册 Carbon 热键）
+    var onHotkeyChanged: ((HotkeySpec) -> Void)?
+
+    /// 菜单栏显示用的热键标题（如 `⌘⇧V`）
+    var hotkeyTitle: String {
+        HotkeyDisplay.displayName(for: hotkey)
+    }
+
+    /// 当前热键对应的 Carbon HotkeySpec
+    var currentHotkeySpec: HotkeySpec? {
+        LauncherFeature.makeHotkeySpec(from: hotkey)
+    }
+
     func start() {}
 
-    /// 关闭功能时收起面板，避免开关已经关了还浮着一个密码窗口。
-    /// 不解锁/锁定 vault——那是用户显式操作（窗口里的「锁定」按钮）。
+    /// 关闭功能时收起面板并停止自动锁定计时器。
     func stop() {
+        autoLockTimer?.invalidate()
+        autoLockTimer = nil
         window?.orderOut(nil)
     }
 
@@ -69,6 +82,7 @@ final class PasswordVaultFeature: Feature {
             manager.showUnlockView()
         }
         manager.makeKeyAndOrderFront(nil)
+        resetAutoLockTimer()
     }
 
     /// 显示密码面板（已可见则只置前，不重复记录前台应用）。
@@ -84,6 +98,7 @@ final class PasswordVaultFeature: Feature {
             manager.showUnlockView()
         }
         manager.makeKeyAndOrderFront(nil)
+        resetAutoLockTimer()
     }
 
     func hide() {
@@ -99,39 +114,48 @@ final class PasswordVaultFeature: Feature {
 
     // MARK: - 配置
 
-    /// TODO: 三项配置目前都没有运行时入口，先如实保存：
-    /// - `hotkey` 现在硬编码在 `main.swift` 的 `registerPasswordManagerHotkey()`
-    ///   （Carbon `RegisterEventHotKey`，keyCode 9 = V，cmd+shift）；
-    /// - `autoLockMinutes` 需要 `VaultService` 暴露定时锁定（当前只有手动 `lock()`）；
-    /// - `clipboardClearSeconds` 需要 `PasswordPaster` 把写死的 0.5 秒恢复
-    ///   改成可配置的「延迟清除」语义（当前是恢复旧内容，不是清空）。
-    /// 等这三处暴露 API 后在这里转发，不要假装已经生效。
     func applyValues(_ config: FeatureConfig) {
-        // 热键在 values 里的形状还没被设置窗口定型（`SettingItem` 到
-        // `FeatureConfig.values` 的写入尚未实现），这里兼容两种最自然的写法：
-        // `{ "key": "v", "modifiers": [...] }` 对象，以及只存键名的字符串。
-        if case .object(let dict)? = config.values["hotkey"] {
-            let key = Self.stringValue(dict["key"]) ?? hotkey.key
-            let modifiers: [String]?
-            if case .array(let list)? = dict["modifiers"] {
-                modifiers = list.compactMap(Self.stringValue)
-            } else {
-                modifiers = hotkey.modifiers
+        if let decoded = SettingsPaneViewController.decodeHotkey(config.values["hotkey"]) {
+            if decoded.key != hotkey.key || (decoded.modifiers ?? []) != (hotkey.modifiers ?? []) {
+                hotkey = decoded
+                if let spec = LauncherFeature.makeHotkeySpec(from: decoded) {
+                    onHotkeyChanged?(spec)
+                }
             }
-            hotkey = HotkeyKeySpec(key: key, modifiers: modifiers)
         } else if case .string(let key)? = config.values["hotkey"] {
-            hotkey = HotkeyKeySpec(key: key, modifiers: hotkey.modifiers)
+            let updated = HotkeyKeySpec(key: key, modifiers: hotkey.modifiers)
+            if updated.key != hotkey.key || (updated.modifiers ?? []) != (hotkey.modifiers ?? []) {
+                hotkey = updated
+                if let spec = LauncherFeature.makeHotkeySpec(from: updated) {
+                    onHotkeyChanged?(spec)
+                }
+            }
         }
         if case .int(let value)? = config.values["autoLockMinutes"] {
             autoLockMinutes = min(max(value, 0), 60)
+        } else {
+            autoLockMinutes = 5
         }
         if case .int(let value)? = config.values["clipboardClearSeconds"] {
             clipboardClearSeconds = min(max(value, 5), 300)
+        } else {
+            clipboardClearSeconds = 30
         }
+        PasswordPaster.clearDelaySeconds = TimeInterval(clipboardClearSeconds)
+        resetAutoLockTimer()
     }
 
-    private static func stringValue(_ value: JSONValue?) -> String? {
-        guard case .string(let text)? = value else { return nil }
-        return text
+    private func resetAutoLockTimer() {
+        autoLockTimer?.invalidate()
+        autoLockTimer = nil
+        guard autoLockMinutes > 0 else { return }
+        let interval = TimeInterval(autoLockMinutes * 60)
+        autoLockTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            guard let self, let window = self.window, window.vaultService.isUnlocked else { return }
+            window.vaultService.lock()
+            if window.isVisible {
+                window.showUnlockView()
+            }
+        }
     }
 }

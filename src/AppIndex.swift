@@ -20,6 +20,7 @@ struct AppEntry: Hashable {
 /// 扫描并缓存本机应用列表
 final class AppIndex {
     private(set) var entries: [AppEntry] = []
+    var pinyinMatchEnabled = true
 
     /// 系统应用的中文名不在自己的 Info.plist 里，系统 API 取不到，只能内置一份常见对照
     private static let chineseAliases: [String: String] = [
@@ -151,14 +152,16 @@ final class AppIndex {
         }
 
         // 拼音：丰声 -> fs、fengsheng；多音字会有多个变体
-        for variant in entry.pinyinInitials where variant.hasPrefix(query) {
-            best = max(best ?? 0, 850)
-        }
-        for variant in entry.pinyinFulls where variant.hasPrefix(query) {
-            best = max(best ?? 0, 840)
-        }
-        for variant in entry.pinyinFulls where isSubsequence(query, of: variant) {
-            best = max(best ?? 0, 600 + min(variant.count - query.count, 190))
+        if pinyinMatchEnabled {
+            for variant in entry.pinyinInitials where variant.hasPrefix(query) {
+                best = max(best ?? 0, 850)
+            }
+            for variant in entry.pinyinFulls where variant.hasPrefix(query) {
+                best = max(best ?? 0, 840)
+            }
+            for variant in entry.pinyinFulls where isSubsequence(query, of: variant) {
+                best = max(best ?? 0, 600 + min(variant.count - query.count, 190))
+            }
         }
         return best
     }

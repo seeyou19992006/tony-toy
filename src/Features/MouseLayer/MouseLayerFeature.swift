@@ -48,16 +48,8 @@ final class MouseLayerFeature: Feature {
     func start() { controller.setEnabled(true) }
     func stop() { controller.setEnabled(false) }
 
-    /// 激活键 / 映射表变更后需要控制器重新解析配置。
-    ///
-    /// TODO: 依赖协调者为 `MouseLayerController` 增加应用配置的入口。
-    /// 现状：`reloadLayerConfig()` 是 private，唯一公开的 `setEnabled(_:)`
-    /// 只能整条重启 tap，且重载来源是独立的 `mouse-layer.json`，
-    /// 不读 `FeatureConfig.values`。所以这里先留空，等控制器暴露
-    /// `func applyConfig(_ config: MouseLayerResolvedConfig)`（或 `reload()`）后再接。
+    /// 激活键 / 映射表变更后轻量重载（不拆掉 event tap）。
     func applyValues(_ config: FeatureConfig) {
-        // 映射表改了要重新加载——配置窗口保存后立即生效，不用重启。
-        // `reload()` 是轻量重载（只重读映射），不会拆掉 event tap。
         controller.reload()
     }
 }
