@@ -18,9 +18,22 @@ final class CapsMapperController {
     private let actionExecutor = AppActionExecutor()
     private var mappings: [Int64: CapsResolvedMapping] = [:]
     private var suppressedKeys: Set<Int64> = []
+    private var tapEnabled = true
+    private var tapTimeoutMs = 200
+    private var tapKeyCode: CGKeyCode = 53
+    private var tapModifiers: CGEventFlags = []
+    private var f19DownUptime: TimeInterval?
+    private var usedOtherKeyWhileLayerActive = false
 
     func setEnabled(_ enabled: Bool) {
         if enabled { start() } else { stop() }
+    }
+
+    func configureTap(enabled: Bool, timeoutMs: Int, keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        tapEnabled = enabled
+        tapTimeoutMs = min(max(timeoutMs, 50), 1000)
+        tapKeyCode = keyCode
+        tapModifiers = modifiers
     }
 
     /// 重新加载映射表（配置窗口改了映射后调用）。
@@ -53,6 +66,8 @@ final class CapsMapperController {
     private func stop() {
         tap.stop()
         isLayerActive = false
+        f19DownUptime = nil
+        usedOtherKeyWhileLayerActive = false
         mappings = [:]
         suppressedKeys.removeAll()
         applyMapping(remap: false)
@@ -72,9 +87,36 @@ final class CapsMapperController {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
         if keyCode == 80 { // F19
-            if type == .keyDown { isLayerActive = true; dbg("F19 down") }
-            else if type == .keyUp { isLayerActive = false; dbg("F19 up") }
+            if type == .keyDown {
+                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                if !isRepeat {
+                    isLayerActive = true
+                    f19DownUptime = ProcessInfo.processInfo.systemUptime
+                    usedOtherKeyWhileLayerActive = false
+                    dbg("F19 down")
+                }
+            } else if type == .keyUp {
+                isLayerActive = false
+                let shouldTap = tapEnabled
+                    && !usedOtherKeyWhileLayerActive
+                    && f19DownUptime.map {
+                        (ProcessInfo.processInfo.systemUptime - $0) * 1000 <= Double(tapTimeoutMs)
+                    } == true
+                f19DownUptime = nil
+                usedOtherKeyWhileLayerActive = false
+                dbg("F19 up shouldTap=\(shouldTap)")
+                if shouldTap {
+                    let targetKeyCode = tapKeyCode
+                    let targetModifiers = tapModifiers
+                    DispatchQueue.main.async {
+                        Self.postTapKey(keyCode: targetKeyCode, modifiers: targetModifiers)
+                    }
+                }
+            }
             return nil
+        }
+        if isLayerActive, (type == .keyDown || type == .flagsChanged) {
+            usedOtherKeyWhileLayerActive = true
         }
         if type == .keyUp, suppressedKeys.remove(keyCode) != nil {
             return nil
@@ -90,6 +132,17 @@ final class CapsMapperController {
             }
         }
         return event
+    }
+
+    private static func postTapKey(keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
+            return
+        }
+        keyDown.flags = modifiers
+        keyUp.flags = modifiers
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private func setUserKeyMappings(_ mappings: [[String: Any]]) -> Bool {
