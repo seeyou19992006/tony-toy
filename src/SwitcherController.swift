@@ -289,18 +289,49 @@ final class SwitcherController {
         }
     }
 
-    /// 完全退出选中的无窗口应用。
-    /// 退出后立即关闭面板：否则松开 ⌘ 触发 commit 会把刚退出的应用重新拉起。
-    func quitSelected() {
-        guard isVisible, let item = current, !item.hasWindow else { return }
-        guard let app = NSRunningApplication
-            .runningApplications(withBundleIdentifier: item.entry.bundleID).first else {
+    /// 选中项有窗口时关闭该窗口；无窗口时退出对应应用。
+    /// 若关闭/退出后仍有剩余条目则原地刷新列表，全部清空时自动隐藏面板。
+    func closeOrQuitSelected() {
+        guard isVisible, items.indices.contains(selected) else { return }
+        let item = items[selected]
+
+        if item.hasWindow {
+            if item.entry.bundleID == Bundle.main.bundleIdentifier {
+                let targetTitle = item.windowTitle
+                if let match = NSApp.windows.first(where: { win in
+                    guard win.level == .normal, win.styleMask.contains(.titled),
+                          win.isVisible || win.isMiniaturized else { return false }
+                    let sanitized = SwitcherItem.sanitize(
+                        title: win.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                        appName: item.entry.name)
+                    return targetTitle == nil || sanitized == targetTitle
+                }) {
+                    match.performClose(nil)
+                }
+            } else if let element = item.window {
+                var closeButtonValue: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &closeButtonValue) == .success,
+                   let rawButton = closeButtonValue,
+                   CFGetTypeID(rawButton) == AXUIElementGetTypeID() {
+                    let closeButton = unsafeBitCast(rawButton, to: AXUIElement.self)
+                    AXUIElementPerformAction(closeButton, kAXPressAction as CFString)
+                }
+            }
+        } else if let app = NSRunningApplication
+            .runningApplications(withBundleIdentifier: item.entry.bundleID).first {
+            app.terminate()
+        }
+
+        items.remove(at: selected)
+        if items.isEmpty {
             hide()
             return
         }
-
-        app.terminate()
-        hide()
+        (rows, cols) = Self.grid(for: items.count)
+        selected = min(selected, items.count - 1)
+        for window in windows {
+            window.present(items: items, rows: rows, cols: cols, selected: selected)
+        }
     }
 
     func cancel() {
