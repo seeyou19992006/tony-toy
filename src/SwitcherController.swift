@@ -104,10 +104,12 @@ final class SwitcherController {
 
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &value) == .success,
-              let raw = value else { return nil }
+              let raw = value,
+              CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
 
+        let axWindow = unsafeBitCast(raw, to: AXUIElement.self)
         var titleValue: CFTypeRef?
-        AXUIElementCopyAttributeValue(raw as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
+        AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleValue)
         let rawTitle = (titleValue as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let title = SwitcherItem.sanitize(title: rawTitle, appName: appName)
         return "\(bundleID)|\(title)"
@@ -128,9 +130,10 @@ final class SwitcherController {
 
     // MARK: - 展示
 
-    func show() {
+    @discardableResult
+    func show() -> Bool {
         items = Self.buildItems(showWindowlessApps: showWindowlessApps)
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty else { return false }
 
         (rows, cols) = Self.grid(for: items.count)
         // 与系统切换器一致：初次弹出选中第二个，第一个通常是当前应用
@@ -148,6 +151,7 @@ final class SwitcherController {
         for window in windows.dropFirst() {
             window.orderFrontRegardless()
         }
+        return true
     }
 
     func hide() {

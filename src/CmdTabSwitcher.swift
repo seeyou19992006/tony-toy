@@ -44,9 +44,16 @@ final class CmdTabSwitcher {
         if type == .keyDown, keyCode == tabKeyCode, flags.contains(.maskCommand) {
             let backward = flags.contains(.maskShift)
             if !isActive {
-                isActive = true
-                DispatchQueue.main.async {
-                    SwitcherController.shared.show()
+                if Thread.isMainThread {
+                    isActive = SwitcherController.shared.show()
+                } else {
+                    isActive = true
+                    DispatchQueue.main.async { [weak self] in
+                        let shown = SwitcherController.shared.show()
+                        if !shown {
+                            self?.isActive = false
+                        }
+                    }
                 }
             } else {
                 DispatchQueue.main.async {

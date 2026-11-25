@@ -50,7 +50,6 @@ final class MouseLayerController {
         let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
         switch type {
         case _ where isMouseDown(type) && buttonNumber == layerConfig.activationButton:
-            reloadLayerConfig()
             isLayerActive = true
             volumeEngine.beginInteraction()
             return nil
@@ -75,7 +74,7 @@ final class MouseLayerController {
             }
         }
 
-        if isLayerActive, isMouseUp(type), suppressedMouseButtons.contains(buttonNumber) {
+        if isMouseUp(type), suppressedMouseButtons.contains(buttonNumber) {
             suppressedMouseButtons.remove(buttonNumber)
             return nil
         }

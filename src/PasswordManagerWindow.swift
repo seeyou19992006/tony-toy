@@ -96,6 +96,12 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
 
         setupUI()
     }
+
+    deinit {
+        if let monitor = searchFieldMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
     
     override func orderOut(_ sender: Any?) {
         // 隐藏面板前注销密码框焦点，确保系统立刻退出 SecureEventInput
@@ -242,7 +248,8 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                         return nil
                     }
                 }
-            case 124: // 右箭头 - 切换到下一个字段（按 UI 列顺序：host→username→password）
+            case 124: // 右箭头 - 搜索框为空时切换到下一个字段（按 UI 列顺序：host→username→password）
+                guard (self.searchField?.stringValue ?? "").isEmpty else { break }
                 switch self.activeField {
                 case .host: self.activeField = .username
                 case .username: self.activeField = .password
@@ -250,7 +257,8 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
                 }
                 self.refreshSelectedCell()
                 return nil
-            case 123: // 左箭头 - 切换到上一个字段（password→username→host）
+            case 123: // 左箭头 - 搜索框为空时切换到上一个字段（password→username→host）
+                guard (self.searchField?.stringValue ?? "").isEmpty else { break }
                 switch self.activeField {
                 case .host: self.activeField = .password
                 case .password: self.activeField = .username
@@ -622,7 +630,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
             let alert = NSAlert()
             alert.messageText = "请填写必填项"
             alert.addButton(withTitle: "确定")
-            alert.beginSheetModal(for: self)
+            alert.beginSheetModal(for: panel)
             return
         }
         
@@ -641,7 +649,7 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
             alert.messageText = "保存失败"
             alert.informativeText = error.localizedDescription
             alert.addButton(withTitle: "确定")
-            alert.beginSheetModal(for: self)
+            alert.beginSheetModal(for: panel)
         }
     }
     
@@ -862,18 +870,13 @@ class PasswordManagerWindow: NSWindow, NSWindowDelegate {
             value = entry.host
         }
         
-        // 复制到剪贴板
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
-        
         // 保存需要恢复焦点的应用
         let appToRestore = previousApp
         
         // 隐藏窗口
         orderOut(nil)
         
-        // 恢复前台应用焦点后立即粘贴
+        // 恢复前台应用焦点后由 PasswordPaster 写入剪贴板并粘贴
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if let app = appToRestore {
                 app.activate()

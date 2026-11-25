@@ -81,7 +81,9 @@ final class FeatureRegistry {
 
     private func applyAll(_ config: TonyToyConfig) {
         for feature in features {
-            feature.apply(config.features[feature.id] ?? FeatureConfig())
+            feature.apply(
+                config.features[feature.id] ?? FeatureConfig(isEnabled: feature.defaultEnabled)
+            )
         }
     }
 

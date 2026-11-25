@@ -13,6 +13,8 @@ final class HotkeyMapperController {
     private let configStore = HotkeyMappingConfigStore()
     private let actionExecutor = AppActionExecutor()
     private var mappings: [HotkeyResolvedMapping] = []
+    /// 记录按下的映射，避免用户先松开修饰键时 `.keyUp` 漏匹配导致按键卡住或泄露给前台应用
+    private var activeMappings: [Int64: HotkeyResolvedMapping] = [:]
 
     func setEnabled(_ enabled: Bool) {
         if enabled { start() } else { stop() }
@@ -46,19 +48,24 @@ final class HotkeyMapperController {
     private func stop() {
         tap.stop()
         mappings = []
+        activeMappings.removeAll()
     }
 
     private func handleEvent(type: CGEventType, event: CGEvent) -> CGEvent? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyUp, let active = activeMappings.removeValue(forKey: keyCode) {
+            actionExecutor.dispatch(active.action, phase: .keyUp)
+            return nil
+        }
+
         let flags = event.flags
         guard let mapping = mappings.first(where: { $0.matches(keyCode: keyCode, flags: flags) }) else {
             return event
         }
 
         if type == .keyDown {
+            activeMappings[keyCode] = mapping
             actionExecutor.dispatch(mapping.action, phase: .keyDown)
-        } else if type == .keyUp {
-            actionExecutor.dispatch(mapping.action, phase: .keyUp)
         }
         return nil
     }

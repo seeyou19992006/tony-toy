@@ -157,6 +157,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 4. 加载配置并启动功能（内部做版本检查 + 默认值补齐 + 热更新接线）
         featureRegistry.startAll()
         config = (try? configStore.load()) ?? .default
+        NotificationCenter.default.addObserver(
+            forName: .tonyToyConfigDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            if let updated = notification.object as? TonyToyConfig {
+                self.config = updated
+            } else {
+                self.config = (try? self.configStore.load()) ?? self.config
+            }
+            self.buildMenu()
+        }
 
         // 5. 应用主题（重启后恢复）
         ThemeApplier.apply(config.general.theme)
@@ -416,12 +429,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setFeatureEnabled(_ id: String) {
         guard let feature = feature(id) else { return }
 
-        var featureConfig = config.features[id] ?? FeatureConfig()
+        var latest = (try? configStore.load()) ?? config
+        var featureConfig = latest.features[id] ?? FeatureConfig(isEnabled: feature.defaultEnabled)
         featureConfig.isEnabled.toggle()
-        config.features[id] = featureConfig
+        latest.features[id] = featureConfig
+        config = latest
 
+        try? configStore.save(latest)
         feature.apply(featureConfig)
-        try? configStore.save(config)
         buildMenu()
     }
     

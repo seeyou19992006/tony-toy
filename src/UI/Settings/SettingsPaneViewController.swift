@@ -1,5 +1,9 @@
 import AppKit
 
+extension Notification.Name {
+    static let tonyToyConfigDidChange = Notification.Name("TonyToyConfigDidChange")
+}
+
 /// 翻转坐标系的文档视图：滚动内容从顶部开始排列。
 ///
 /// NSView 默认 y=0 在底部，非翻转的 documentView 又总是贴在滚动视图底部，
@@ -193,7 +197,8 @@ extension SettingsPaneViewController {
     /// 不用为每个功能手写一遍「标题 + 控件 + 读写绑定」。
     func buildSettings(for feature: Feature) {
         let config = (try? ConfigStore.shared.load()) ?? .default
-        let featureConfig = config.features[feature.id] ?? FeatureConfig()
+        let featureConfig = config.features[feature.id]
+            ?? FeatureConfig(isEnabled: feature.defaultEnabled)
 
         var pendingRows: [NSView] = []
         func flushPendingRows() {
@@ -405,16 +410,18 @@ extension SettingsPaneViewController {
 
     // MARK: - 读写
 
-    /// 改配置：写内存 → 落盘 → 通知 Feature 热更新
+    /// 改配置：先落盘再通知 Feature 热更新（确保 `controller.reload()` 读到最新配置），并同步给托盘菜单。
     private func updateConfig(feature: Feature, _ mutate: (inout FeatureConfig) -> Void) {
         let store = ConfigStore.shared
         var config = (try? store.load()) ?? .default
-        var featureConfig = config.features[feature.id] ?? FeatureConfig()
+        var featureConfig = config.features[feature.id]
+            ?? FeatureConfig(isEnabled: feature.defaultEnabled)
         mutate(&featureConfig)
         config.features[feature.id] = featureConfig
 
-        feature.apply(featureConfig)
         try? store.save(config)
+        feature.apply(featureConfig)
+        NotificationCenter.default.post(name: .tonyToyConfigDidChange, object: config)
     }
 
     // MARK: - 编解码

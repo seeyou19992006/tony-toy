@@ -17,6 +17,7 @@ final class CapsMapperController {
     private let configStore = CapsMappingConfigStore()
     private let actionExecutor = AppActionExecutor()
     private var mappings: [Int64: CapsResolvedMapping] = [:]
+    private var suppressedKeys: Set<Int64> = []
 
     func setEnabled(_ enabled: Bool) {
         if enabled { start() } else { stop() }
@@ -53,6 +54,7 @@ final class CapsMapperController {
         tap.stop()
         isLayerActive = false
         mappings = [:]
+        suppressedKeys.removeAll()
         applyMapping(remap: false)
     }
 
@@ -74,10 +76,16 @@ final class CapsMapperController {
             else if type == .keyUp { isLayerActive = false; dbg("F19 up") }
             return nil
         }
+        if type == .keyUp, suppressedKeys.remove(keyCode) != nil {
+            return nil
+        }
         if isLayerActive {
             if let mapping = mappings[keyCode] {
                 dbg("caps map keyCode=\(keyCode)")
-                if type == .keyDown { actionExecutor.dispatch(mapping.action) }
+                if type == .keyDown {
+                    suppressedKeys.insert(keyCode)
+                    actionExecutor.dispatch(mapping.action)
+                }
                 return nil
             }
         }

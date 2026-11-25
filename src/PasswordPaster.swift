@@ -16,8 +16,10 @@ class PasswordPaster {
         pasteboard.clearContents()
         pasteboard.setString(password, forType: .string)
 
-        // 模拟 Cmd+V
-        simulateCmdV()
+        // 模拟 Cmd+V（后台线程发送，避免 usleep 阻塞主线程）
+        DispatchQueue.global(qos: .userInteractive).async {
+            simulateCmdV()
+        }
 
         // 延迟清除剪贴板：仅当剪贴板内容仍是本次写入的密码时才清空，避免误删用户后续复制的内容
         clearGeneration &+= 1

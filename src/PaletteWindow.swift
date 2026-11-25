@@ -282,14 +282,22 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
         let raw = searchField.stringValue
         let keyword = raw.trimmingCharacters(in: .whitespaces)
 
-        windowedBundleIDs = Set(WindowedApps.current().map(\.bundleID))
-        runningBundleIDs = Set(WindowedApps.running().map(\.bundleID))
+        let windowed = WindowedApps.current()
+        let running = WindowedApps.running()
+        windowedBundleIDs = Set(windowed.map(\.bundleID))
+        runningBundleIDs = Set(running.map(\.bundleID))
 
         if raw.isEmpty {
             // 空输入：有窗口的在前，后台运行的殿后；关闭「显示无窗口应用」时仅展示有窗口应用
-            let defaults = showWindowlessApps
-                ? WindowedApps.defaultEntries()
-                : WindowedApps.current()
+            let defaults: [AppEntry]
+            if showWindowlessApps {
+                let background = running
+                    .filter { !windowedBundleIDs.contains($0.bundleID) }
+                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                defaults = windowed + background
+            } else {
+                defaults = windowed
+            }
             results = defaults.isEmpty ? index.search("") : defaults
         } else if keyword.isEmpty {
             // 只输入空格：列出所有程序，这是默认窗口列表之外查看全部应用的入口
@@ -340,12 +348,21 @@ final class PaletteWindow: NSPanel, NSWindowDelegate, NSTableViewDataSource, NST
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        // 选中态变化需要同步刷新右侧提示（↵ 与 ⌘N 互换）
+        // 选中态变化需要同步刷新右侧提示（↵ 与 ⌘N 互换），并同步 selectedIndex 避免鼠标点击后键盘跳行
         let selected = tableView.selectedRow
+        if selected >= 0 {
+            let candidate = currentPage * pageSize + selected
+            if results.indices.contains(candidate) {
+                selectedIndex = candidate
+            }
+        }
         let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier("app"))
         guard column >= 0 else { return }
-        let all = IndexSet(integersIn: 0..<results.count)
-        tableView.reloadData(forRowIndexes: all, columnIndexes: IndexSet(integer: column))
+        let visibleCount = pageItems.count
+        if visibleCount > 0 {
+            let rows = IndexSet(integersIn: 0..<visibleCount)
+            tableView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: column))
+        }
         if selected >= 0 {
             tableView.scrollRowToVisible(selected)
         }
