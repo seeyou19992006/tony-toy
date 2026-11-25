@@ -11,6 +11,9 @@ enum AppRuntimeState {
 @_silgen_name("CGSMainConnectionID")
 private func CGSMainConnectionID() -> UInt32
 
+@_silgen_name("CGSCopyManagedDisplaySpaces")
+private func CGSCopyManagedDisplaySpaces(_ cid: UInt32) -> CFArray?
+
 @_silgen_name("CGSCopySpacesForWindows")
 private func CGSCopySpacesForWindows(
     _ cid: UInt32, _ mask: UInt32, _ windowIDs: CFArray
@@ -24,9 +27,12 @@ enum WindowedApps {
         let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
                                               kCGNullWindowID) as? [[String: Any]] ?? []
         let cid = CGSMainConnectionID()
+        let activeSpaces = currentActiveSpaceIDs(cid: cid)
+        let screenSizes = NSScreen.screens.map(\.frame.size)
         let selfPID = ProcessInfo.processInfo.processIdentifier
 
         var seen = Set<pid_t>()
+        var axChecked = [pid_t: Bool]()
         var entries: [AppEntry] = []
 
         for info in list {
@@ -37,7 +43,28 @@ enum WindowedApps {
             let isOnscreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
             if !isOnscreen {
                 guard let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
-                      windowBelongsToAnySpace(cid: cid, windowNumber: windowNumber) else { continue }
+                      let spaces = CGSCopySpacesForWindows(
+                          cid, allSpacesMask, [windowNumber] as CFArray) as? [UInt64],
+                      !spaces.isEmpty else { continue }
+
+                // 位于当前 Space 但未上屏的通常是系统/应用隐藏的辅助窗；只有跨 Space 才继续判定
+                let onOtherSpace = !Set(spaces).subtracting(activeSpaces).isEmpty
+                guard onOtherSpace else { continue }
+
+                let matchesScreen = matchesAnyScreenFrame(info: info, screenSizes: screenSizes)
+                if !matchesScreen {
+                    let hasAXWindow: Bool
+                    if let cached = axChecked[pid] {
+                        hasAXWindow = cached
+                    } else {
+                        let found = pid == selfPID
+                            ? hasOwnStandardWindow()
+                            : !WindowEnumerator.standardWindows(of: pid).isEmpty
+                        axChecked[pid] = found
+                        hasAXWindow = found
+                    }
+                    guard hasAXWindow else { continue }
+                }
             }
 
             guard let app = NSRunningApplication(processIdentifier: pid),
@@ -53,11 +80,56 @@ enum WindowedApps {
         return entries
     }
 
-    /// 菜单栏条（1920×30）、图标窗及未上屏的隐藏辅助窗口不属于任何 Space；
-    /// 真实窗口（无论大小，含全屏与跨桌面窗口）均绑定到至少一个 Space ID。
-    private static func windowBelongsToAnySpace(cid: UInt32, windowNumber: Int) -> Bool {
-        let spaces = CGSCopySpacesForWindows(cid, allSpacesMask, [windowNumber] as CFArray) as? [UInt64]
-        return !(spaces?.isEmpty ?? true)
+    /// 识别在其他 Space 处于原生全屏（且 AX 可能取不到窗口）的进程
+    static func pidsWithFullscreenOtherSpaceWindows() -> Set<pid_t> {
+        let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
+                                              kCGNullWindowID) as? [[String: Any]] ?? []
+        let cid = CGSMainConnectionID()
+        let activeSpaces = currentActiveSpaceIDs(cid: cid)
+        let screenSizes = NSScreen.screens.map(\.frame.size)
+        var result = Set<pid_t>()
+
+        for info in list {
+            guard let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
+                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  ((info[kCGWindowIsOnscreen as String] as? Bool) ?? false) == false,
+                  let windowNumber = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
+                  let spaces = CGSCopySpacesForWindows(
+                      cid, allSpacesMask, [windowNumber] as CFArray) as? [UInt64],
+                  !Set(spaces).subtracting(activeSpaces).isEmpty,
+                  matchesAnyScreenFrame(info: info, screenSizes: screenSizes) else { continue }
+            result.insert(pid)
+        }
+        return result
+    }
+
+    private static func currentActiveSpaceIDs(cid: UInt32) -> Set<UInt64> {
+        let displays = (CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]]) ?? []
+        var active = Set<UInt64>()
+        for display in displays {
+            if let current = display["Current Space"] as? [String: Any],
+               let id = (current["id64"] as? NSNumber)?.uint64Value {
+                active.insert(id)
+            }
+        }
+        return active
+    }
+
+    private static func matchesAnyScreenFrame(info: [String: Any], screenSizes: [CGSize]) -> Bool {
+        guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+              let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+              let height = (bounds["Height"] as? NSNumber)?.doubleValue else { return false }
+        return screenSizes.contains {
+            abs($0.width - width) <= 2 && abs($0.height - height) <= 2
+        }
+    }
+
+    private static func hasOwnStandardWindow() -> Bool {
+        NSApp.windows.contains {
+            $0.level == .normal && $0.styleMask.contains(.titled)
+                && ($0.isVisible || $0.isMiniaturized)
+                && $0.frame.width > 1 && $0.frame.height > 1
+        }
     }
 
     /// 所有正在运行、有图形界面的应用（含后台无窗口的）
